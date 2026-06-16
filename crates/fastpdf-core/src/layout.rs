@@ -28,19 +28,22 @@ pub fn cluster_chars(chars: &[CharInfo], font: &str, font_size: f64, color: u32)
     // Step 1: Detect columns at the span level
     let columns = detect_columns_from_spans(&spans);
 
-    if columns.len() <= 1 {
+    let blocks = if columns.len() <= 1 {
         // Single column: process normally
         let lines = build_lines(spans, font_size);
-        return build_blocks(lines, font_size);
-    }
+        build_blocks(lines, font_size)
+    } else {
+        // Multi-column: process each column independently, then merge
+        let mut all_blocks = Vec::new();
+        for col_spans in columns {
+            let lines = build_lines(col_spans, font_size);
+            all_blocks.extend(build_blocks(lines, font_size));
+        }
+        all_blocks
+    };
 
-    // Multi-column: process each column independently, then merge
-    let mut all_blocks = Vec::new();
-    for col_spans in columns {
-        let lines = build_lines(col_spans, font_size);
-        all_blocks.extend(build_blocks(lines, font_size));
-    }
-    all_blocks
+    // Step 2: Merge hyphenated words across lines
+    merge_hyphenated_lines(blocks)
 }
 
 /// Detect column boundaries at the span level.
@@ -307,6 +310,112 @@ fn make_block(lines: Vec<TextLine>) -> TextBlock {
     TextBlock { bbox, lines }
 }
 
+/// Merge hyphenated words across lines.
+/// If a line ends with '-' and the next line starts with a lowercase letter,
+/// merge the two lines by removing the hyphen and combining the text.
+/// Runs repeatedly until no more merges are possible (handles consecutive hyphens).
+fn merge_hyphenated_lines(blocks: Vec<TextBlock>) -> Vec<TextBlock> {
+    let mut result = Vec::with_capacity(blocks.len());
+
+    for block in blocks {
+        if block.lines.len() < 2 {
+            result.push(block);
+            continue;
+        }
+
+        // Run merge repeatedly until stable
+        let mut lines = block.lines;
+        loop {
+            let (merged, count) = merge_hyphens_pass(lines);
+            lines = merged;
+            if count == 0 {
+                break;
+            }
+        }
+
+        let bbox = compute_bbox_from_lines(&lines);
+        result.push(TextBlock { bbox, lines });
+    }
+
+    result
+}
+
+/// Single pass of hyphenation merge. Returns (merged lines, number of merges).
+fn merge_hyphens_pass(lines: Vec<TextLine>) -> (Vec<TextLine>, usize) {
+    let mut merged_lines: Vec<TextLine> = Vec::new();
+    let mut merge_count = 0;
+    let mut i = 0;
+
+    while i < lines.len() {
+        if i + 1 < lines.len() {
+            let curr_text = line_text(&lines[i]);
+            let next_text = line_text(&lines[i + 1]);
+
+            // Check if current line ends with hyphen and next starts with lowercase
+            if curr_text.ends_with('-') {
+                let next_first = next_text.chars().next();
+                if let Some(c) = next_first {
+                    if c.is_ascii_lowercase() {
+                        // Merge: remove hyphen from current, combine with next
+                        let merged_line = merge_two_lines(&lines[i], &lines[i + 1]);
+                        merged_lines.push(merged_line);
+                        merge_count += 1;
+                        i += 2;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        merged_lines.push(lines[i].clone());
+        i += 1;
+    }
+
+    (merged_lines, merge_count)
+}
+
+/// Get the text content of a line by concatenating its spans.
+fn line_text(line: &TextLine) -> String {
+    let mut text = String::new();
+    for span in &line.spans {
+        text.push_str(&span.text);
+    }
+    text
+}
+
+/// Merge two lines by removing the trailing hyphen from the first line
+/// and combining all spans.
+fn merge_two_lines(line1: &TextLine, line2: &TextLine) -> TextLine {
+    let mut merged_spans: Vec<TextSpan> = Vec::new();
+
+    // Process spans from line1, removing trailing hyphen from the last span
+    for (i, span) in line1.spans.iter().enumerate() {
+        if i == line1.spans.len() - 1 {
+            // Last span in line1: remove trailing hyphen
+            let mut text = span.text.clone();
+            if text.ends_with('-') {
+                text.pop();
+            }
+            merged_spans.push(TextSpan {
+                text,
+                font: span.font.clone(),
+                size: span.size,
+                color: span.color,
+                bbox: span.bbox,
+                chars: span.chars.clone(),
+            });
+        } else {
+            merged_spans.push(span.clone());
+        }
+    }
+
+    // Add all spans from line2
+    merged_spans.extend(line2.spans.iter().cloned());
+
+    let bbox = compute_bbox_from_spans(&merged_spans);
+    TextLine { bbox, spans: merged_spans }
+}
+
 // ─── BBox helpers ───
 
 fn compute_bbox(chars: &[CharInfo]) -> [f64; 4] {
@@ -464,5 +573,33 @@ mod tests {
         // Left and right column text should not be interleaved
         assert!(all_text.contains("Left"), "Missing left column text: {}", all_text);
         assert!(all_text.contains("Right"), "Missing right column text: {}", all_text);
+    }
+
+    #[test]
+    fn test_hyphenation_merge() {
+        // Two lines in same block, with hyphen at end of first line
+        // Line 1 at y=500, Line 2 at y=515 (15px apart, > line_threshold=6, < block_threshold=18)
+        let chars = vec![
+            make_char('c', 100.0, 500.0, 7.0, 12.0),
+            make_char('o', 107.0, 500.0, 6.0, 12.0),
+            make_char('m', 113.0, 500.0, 8.0, 12.0),
+            make_char('p', 121.0, 500.0, 6.0, 12.0),
+            make_char('r', 127.0, 500.0, 5.0, 12.0),
+            make_char('e', 132.0, 500.0, 5.0, 12.0),
+            make_char('-', 137.0, 500.0, 5.0, 12.0),
+            // Next line (y=515, diff=15 > line_threshold=6, < block_threshold=18)
+            make_char('h', 100.0, 515.0, 6.0, 12.0),
+            make_char('e', 106.0, 515.0, 5.0, 12.0),
+            make_char('n', 111.0, 515.0, 6.0, 12.0),
+            make_char('s', 117.0, 515.0, 5.0, 12.0),
+            make_char('i', 122.0, 515.0, 4.0, 12.0),
+            make_char('v', 126.0, 515.0, 6.0, 12.0),
+            make_char('e', 132.0, 515.0, 5.0, 12.0),
+        ];
+        let blocks = cluster_chars(&chars, "Helvetica", 12.0, 0);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].lines.len(), 1); // Merged into single line
+        let text = line_text(&blocks[0].lines[0]);
+        assert_eq!(text, "comprehensive");
     }
 }

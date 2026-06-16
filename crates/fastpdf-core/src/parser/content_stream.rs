@@ -671,9 +671,10 @@ fn execute_operator_full(
                             let m = Matrix::new(1.0, 0.0, 0.0, 1.0, shift, 0.0);
                             state.tm = m.mul(&state.tm);
 
-                            // Large kerning values (typically >= 200/1000 of font size)
-                            // indicate word boundaries. Insert a synthetic space.
-                            if tj < -150.0 && !result.chars.is_empty() {
+                            // Large kerning values indicate word boundaries.
+                            // Threshold adapts to font size: smaller fonts need smaller gaps.
+                            let threshold = -150.0 * (state.font_size / 12.0).max(0.5);
+                            if tj < threshold && !result.chars.is_empty() {
                                 emit_space(state, result);
                             }
                         }
