@@ -3,7 +3,7 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "fastpdf"
+name = "fastpdf-tool"
 version = "0.1.0"
 description = "The fastest PDF text and image extraction engine. Rust core + Python bindings."
 readme = "README.md"
