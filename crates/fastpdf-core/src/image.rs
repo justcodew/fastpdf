@@ -40,26 +40,53 @@ pub fn resolve_images<'a>(
     images: &[ImageRef],
     resources: &PdfObject<'a>,
     data: &'a [u8],
-    get_object: impl Fn(u32) -> ParseResult<PdfObject<'a>>,
+    get_object: impl Fn(u32) -> ParseResult<PdfObject<'a>> + Copy,
 ) -> Vec<ExtractedImage> {
     let mut result = Vec::new();
 
     // Get /XObject dict from resources
     let xobjects = match resources.get(b"XObject") {
         Some(PdfObject::Dict(d)) => d,
-        _ => return result,
+        _ => {
+            return result;
+        }
     };
 
     for img_ref in images {
-        // Look up the image name in /XObject
         let name_bytes = img_ref.name.as_bytes();
-        let xobj_ref = match find_in_dict(xobjects, name_bytes) {
-            Some(PdfObject::Ref(r)) => r,
-            _ => continue,
+
+        // First try to find in page's XObject dict
+        let xobj_ref = find_in_dict(xobjects, name_bytes)
+            .and_then(|v| v.as_ref());
+
+        let xobj_num = if let Some(r) = xobj_ref {
+            r.num
+        } else {
+            // Not in page's dict — search Form XObjects' /Resources
+            let mut found = None;
+            for (_, xobj_entry) in xobjects {
+                if let Some(PdfObject::Ref(form_ref)) = Some(xobj_entry) {
+                    if let Ok(form_obj) = get_object(form_ref.num) {
+                        let subtype = form_obj.get(b"Subtype").and_then(|v| v.as_name());
+                        if subtype == Some(b"Form") {
+                            if let Some(PdfObject::Dict(form_xobjects)) = form_obj.get(b"Resources").and_then(|r| r.get(b"XObject")) {
+                                if let Some(PdfObject::Ref(img_ref)) = find_in_dict(form_xobjects, name_bytes) {
+                                    found = Some(img_ref.num);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            match found {
+                Some(num) => num,
+                None => continue,
+            }
         };
 
         // Get the XObject
-        let xobj = match get_object(xobj_ref.num) {
+        let xobj = match get_object(xobj_num) {
             Ok(obj) => obj,
             _ => continue,
         };
@@ -87,7 +114,7 @@ pub fn resolve_images<'a>(
             height,
             bpc,
             colorspace,
-            xref: xobj_ref.num,
+            xref: xobj_num,
             ext,
             data: Some(image_data),
         });
