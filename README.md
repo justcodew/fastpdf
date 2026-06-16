@@ -206,7 +206,7 @@ PDF 文件
 
 | 场景 | 目标 | 实际 |
 |------|------|------|
-| 文本提取 | ≥ PyMuPDF 2x | **~26x** |
+| 文本提取 | ≥ PyMuPDF 2x | **~22x** |
 | 单词重叠率 | ≥ 95% | **96.9%** (regex-based) |
 | 图像元数据 (仅记录偏移) | ≥ PyMuPDF 50x | N/A¹ |
 | 图像字节提取 (含解码) | ≥ PyMuPDF 5x | **11.2x** ✅ |
@@ -230,11 +230,11 @@ cargo test -p fastpdf-core test_cmap
 cargo bench -p fastpdf-core
 ```
 
-当前测试：**82 个测试全部通过** ✅
+当前测试：**85 个测试全部通过** ✅
 
 - 对象解析器：45 个测试
 - xref + trailer：11 个测试
-- 内容流 + 布局 + 字体 + recovery：23 个测试
+- 内容流 + 布局 + 字体 + recovery：26 个测试
 - 流解码器 (LZW/ASCII85/RunLength/ASCIIHex)：3 个测试
 
 ## 依赖
