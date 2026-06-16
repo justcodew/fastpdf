@@ -102,8 +102,16 @@ fn extract_page_batch(
 /// Extract text blocks and images from multiple PDF files.
 /// Supports file-level parallelism and async prefetch.
 pub fn extract_many(paths: &[&str], options: &ExtractOptions) -> Vec<(String, ParseResult<ExtractResult>)> {
-    if options.file_parallel && paths.len() > 1 {
-        // File-level parallel: open all files, then extract in parallel
+    if paths.len() <= 1 {
+        return paths.iter().map(|&path| {
+            (path.to_string(), extract(path, options))
+        }).collect();
+    }
+
+    // For small file counts, sequential + prefetch is faster than rayon
+    // due to thread pool overhead. Use rayon only for large batches.
+    if options.file_parallel && paths.len() >= 8 {
+        // File-level parallel via rayon for large batches
         paths
             .par_iter()
             .map(|&path| {
@@ -115,32 +123,24 @@ pub fn extract_many(paths: &[&str], options: &ExtractOptions) -> Vec<(String, Pa
         // Sequential with prefetch: open next file while processing current
         let mut results = Vec::with_capacity(paths.len());
 
-        if paths.len() > 1 {
-            // Prefetch: mmap the next file while processing current
-            for i in 0..paths.len() {
-                // Start prefetching next file in background
-                let prefetch_handle = if i + 1 < paths.len() {
-                    let next_path = paths[i + 1].to_string();
-                    Some(std::thread::spawn(move || {
-                        Document::open(&next_path)
-                    }))
-                } else {
-                    None
-                };
+        for i in 0..paths.len() {
+            // Start prefetching next file in background
+            let prefetch_handle = if i + 1 < paths.len() {
+                let next_path = paths[i + 1].to_string();
+                Some(std::thread::spawn(move || {
+                    Document::open(&next_path)
+                }))
+            } else {
+                None
+            };
 
-                // Process current file
-                let result = extract(paths[i], options);
-                results.push((paths[i].to_string(), result));
+            // Process current file
+            let result = extract(paths[i], options);
+            results.push((paths[i].to_string(), result));
 
-                // If prefetch completed, the next iteration will benefit from cached mmap
-                if let Some(handle) = prefetch_handle {
-                    let _ = handle.join();
-                }
-            }
-        } else {
-            for &path in paths {
-                let result = extract(path, options);
-                results.push((path.to_string(), result));
+            // If prefetch completed, the next iteration will benefit from cached mmap
+            if let Some(handle) = prefetch_handle {
+                let _ = handle.join();
             }
         }
 
