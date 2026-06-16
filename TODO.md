@@ -39,7 +39,7 @@
   - macOS x86_64 / ARM64
   - Windows x86_64
   - 通过 maturin + GitHub Actions 自动构建
-- [ ] **PyPI 发布**：`pip install fastpdf`（暂不处理）
+- [x] **PyPI 发布**：`pip install fastpdf`
 - [x] **CI/CD**：GitHub Actions 自动测试 + 构建 + 发布
   > .github/workflows/ci.yml + build-wheels.yml
 

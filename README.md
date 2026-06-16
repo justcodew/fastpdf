@@ -259,7 +259,7 @@ cargo bench -p fastpdf-core
 - [x] 阶段 4: 图像提取
 - [x] 阶段 5: 并行化 + I/O 优化
 - [x] 阶段 6: 性能基准 + PyMuPDF 对比测试
-- [ ] 阶段 7: PyPI 发布 + CI/CD
+- [x] 阶段 7: PyPI 发布 + CI/CD
 
 详见 [TODO.md](TODO.md) 获取完整的待完成事项列表。
 
