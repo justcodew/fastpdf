@@ -1,0 +1,12 @@
+[package]
+name = "fastpdf-py"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "fastpdf"
+crate-type = ["cdylib"]
+
+[dependencies]
+fastpdf-core = { path = "../fastpdf-core" }
+pyo3 = { version = "0.24", features = ["extension-module"] }
