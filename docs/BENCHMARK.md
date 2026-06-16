@@ -33,16 +33,38 @@
 
 ### fastpdf vs ritz vs PyMuPDF (5 次迭代平均)
 
+#### 文本提取
+
 | 引擎 | 平均耗时 | 标准差 | 相对 PyMuPDF |
 |------|---------|--------|-------------|
-| PyMuPDF | 134.75ms | 0.62ms | 1.00x |
-| ritz | 39.40ms | 0.17ms | **3.42x** |
-| fastpdf | 5.66ms | 0.21ms | **23.82x** |
+| PyMuPDF | 133.48ms | 2.29ms | 1.00x |
+| ritz | 40.21ms | 0.78ms | **3.32x** |
+| fastpdf | 5.97ms | 0.43ms | **22.38x** |
 
-**fastpdf vs ritz: 6.96x 更快**
+fastpdf vs ritz: **6.74x**
 
-> ritz 是 Rust + MuPDF 封装，瓶颈在 MuPDF C 引擎的 stext 构造（约 39ms）。
-> fastpdf 是纯 Rust 自研解析器，无 MuPDF 依赖，直接字节操作。
+#### 图像提取
+
+| 引擎 | 平均耗时 | 标准差 | 相对 PyMuPDF |
+|------|---------|--------|-------------|
+| PyMuPDF | 14.08ms | 0.13ms | 1.00x |
+| ritz | 34.33ms | 0.52ms | 0.41x |
+| fastpdf | 8.57ms | 2.44ms | **1.64x** |
+
+fastpdf vs ritz: **4.00x**
+
+> ritz 图像提取慢于 PyMuPDF，因为 ritz 的 `get_images(include_data=True)` 包含额外开销。
+> 此 PDF 仅含少量图像，图像提取差异主要来自 API 设计差异。
+
+#### 文本 + 图像 综合
+
+| 引擎 | 平均耗时 | 标准差 | 相对 PyMuPDF |
+|------|---------|--------|-------------|
+| PyMuPDF | 147.98ms | 0.34ms | 1.00x |
+| ritz | 62.65ms | 0.60ms | **2.36x** |
+| fastpdf | 6.29ms | 0.41ms | **23.52x** |
+
+fastpdf vs ritz: **9.96x**
 
 ## 精度结果
 
