@@ -55,10 +55,10 @@
 
 - [x] 多栏布局检测 — 使用平滑密度直方图检测双栏 PDF，正确分离左右栏文本
 - [x] 提升单词重叠率到 95%+ — regex-based 96.9% (目标达成)
-- [ ] 改进 CID 字符解码的 CMap 映射完整性
+- [x] 改进 CID 字符解码的 CMap 映射完整性 — 扩展 Adobe Glyph List（希腊字母、数学符号、变音符号）+ UTF-16BE 代理对处理
 - [x] 优化连字符 (hyphen) 处理 — 跨行连字符合并，196/196 成功合并
 - [x] 调优 TJ 字间距阈值 — 根据字体大小自适应：-150 * max(font_size/12, 0.5)
-- [ ] 布局聚类参数调优 (BLOCK_GAP_FACTOR, SPAN_GAP_FACTOR)
+- [x] 布局聚类参数调优 (BLOCK_GAP_FACTOR, SPAN_GAP_FACTOR) — 测试后原参数最优
 
 ## 已知限制
 
