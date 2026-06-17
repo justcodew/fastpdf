@@ -72,13 +72,14 @@ jobs:
       - name: Install maturin
         run: pip install maturin
 
-      - name: Build wheel
-        run: maturin build --release --out dist
-
-      - name: Install wheel
-        run: pip install dist/*.whl
+      - name: Build and install
+        shell: bash
+        run: |
+          maturin build --release --out dist
+          pip install --find-links dist fastpdf-tool
 
       - name: Run Python tests
+        shell: bash
         run: |
           python -c "import fastpdf; print(f'fastpdf version: {fastpdf.__version__}')"
           python tests/end_to_end.py test_data || echo "No test PDFs available"
