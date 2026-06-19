@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use fastpdf_core::parser::content_stream::scan_content_stream;
-use fastpdf_core::ExtractOptions;
+use flashpdf_core::parser::content_stream::scan_content_stream;
+use flashpdf_core::ExtractOptions;
 
 fn bench_content_stream_scan(c: &mut Criterion) {
     // Simple text content stream
@@ -53,7 +53,7 @@ fn bench_full_extraction(c: &mut Criterion) {
 
         c.bench_function("full_extract_single_page", |b| {
             b.iter(|| {
-                let result = fastpdf_core::extract(black_box(path_str), &options);
+                let result = flashpdf_core::extract(black_box(path_str), &options);
                 black_box(result).ok();
             })
         });
@@ -64,7 +64,7 @@ fn bench_full_extraction(c: &mut Criterion) {
                 ..options.clone()
             };
             b.iter(|| {
-                let result = fastpdf_core::extract(black_box(path_str), &opts);
+                let result = flashpdf_core::extract(black_box(path_str), &opts);
                 black_box(result).ok();
             })
         });
@@ -75,7 +75,7 @@ fn bench_full_extraction(c: &mut Criterion) {
                 ..options.clone()
             };
             b.iter(|| {
-                let result = fastpdf_core::extract(black_box(path_str), &opts);
+                let result = flashpdf_core::extract(black_box(path_str), &opts);
                 black_box(result).ok();
             })
         });
@@ -88,8 +88,8 @@ fn bench_parser(c: &mut Criterion) {
 
     c.bench_function("parse_object_dict", |b| {
         b.iter(|| {
-            let mut cur = fastpdf_core::Cursor::new(black_box(dict_data));
-            fastpdf_core::parse_object(&mut cur)
+            let mut cur = flashpdf_core::Cursor::new(black_box(dict_data));
+            flashpdf_core::parse_object(&mut cur)
         })
     });
 
@@ -97,8 +97,8 @@ fn bench_parser(c: &mut Criterion) {
 
     c.bench_function("parse_object_array", |b| {
         b.iter(|| {
-            let mut cur = fastpdf_core::Cursor::new(black_box(array_data));
-            fastpdf_core::parse_object(&mut cur)
+            let mut cur = flashpdf_core::Cursor::new(black_box(array_data));
+            flashpdf_core::parse_object(&mut cur)
         })
     });
 }

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Download sample PDFs for testing fastpdf
+# Download sample PDFs for testing flashpdf
 # Covers: plain text, mixed content, scanned, tables, CJK, damaged
 
 set -e

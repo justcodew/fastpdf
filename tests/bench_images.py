@@ -12,8 +12,8 @@ WARMUP = 2
 
 
 def bench_image_metadata():
-    """图像元数据 (仅记录偏移): fastpdf vs PyMuPDF"""
-    import fastpdf
+    """图像元数据 (仅记录偏移): flashpdf vs PyMuPDF"""
+    import flashpdf
     import fitz
 
     print("=" * 60)
@@ -22,7 +22,7 @@ def bench_image_metadata():
 
     # Warmup
     for _ in range(WARMUP):
-        fastpdf.extract(PDF_PATH, include_images=False)
+        flashpdf.extract(PDF_PATH, include_images=False)
         doc = fitz.open(PDF_PATH)
         for page in doc:
             page.get_images(full=True)
@@ -38,19 +38,19 @@ def bench_image_metadata():
         doc.close()
         pymupdf_times.append(time.perf_counter() - start)
 
-    # fastpdf: image metadata only (include_images=False skips byte extraction)
-    fastpdf_times = []
+    # flashpdf: image metadata only (include_images=False skips byte extraction)
+    flashpdf_times = []
     for _ in range(ITERATIONS):
         start = time.perf_counter()
-        blocks, images = fastpdf.extract(PDF_PATH, include_images=False)
-        fastpdf_times.append(time.perf_counter() - start)
+        blocks, images = flashpdf.extract(PDF_PATH, include_images=False)
+        flashpdf_times.append(time.perf_counter() - start)
 
     pm_avg = statistics.mean(pymupdf_times)
-    fp_avg = statistics.mean(fastpdf_times)
+    fp_avg = statistics.mean(flashpdf_times)
     speedup = pm_avg / fp_avg if fp_avg > 0 else float('inf')
 
     print(f"  PyMuPDF:  {pm_avg*1000:.2f}ms")
-    print(f"  fastpdf:  {fp_avg*1000:.2f}ms")
+    print(f"  flashpdf:  {fp_avg*1000:.2f}ms")
     print(f"  加速比:   {speedup:.1f}x")
     print(f"  目标:     ≥ 50x")
     print(f"  结果:     {'✅ 达标' if speedup >= 50 else '❌ 未达标'}")
@@ -58,8 +58,8 @@ def bench_image_metadata():
 
 
 def bench_image_bytes():
-    """图像字节提取 (含解码): fastpdf vs PyMuPDF"""
-    import fastpdf
+    """图像字节提取 (含解码): flashpdf vs PyMuPDF"""
+    import flashpdf
     import fitz
 
     print("\n" + "=" * 60)
@@ -68,7 +68,7 @@ def bench_image_bytes():
 
     # Warmup
     for _ in range(WARMUP):
-        fastpdf.extract(PDF_PATH, include_images=True)
+        flashpdf.extract(PDF_PATH, include_images=True)
         doc = fitz.open(PDF_PATH)
         for page in doc:
             for img in page.get_images(full=True):
@@ -96,19 +96,19 @@ def bench_image_bytes():
         doc.close()
         pymupdf_times.append(time.perf_counter() - start)
 
-    # fastpdf: extract image bytes
-    fastpdf_times = []
+    # flashpdf: extract image bytes
+    flashpdf_times = []
     for _ in range(ITERATIONS):
         start = time.perf_counter()
-        blocks, images = fastpdf.extract(PDF_PATH, include_images=True)
-        fastpdf_times.append(time.perf_counter() - start)
+        blocks, images = flashpdf.extract(PDF_PATH, include_images=True)
+        flashpdf_times.append(time.perf_counter() - start)
 
     pm_avg = statistics.mean(pymupdf_times)
-    fp_avg = statistics.mean(fastpdf_times)
+    fp_avg = statistics.mean(flashpdf_times)
     speedup = pm_avg / fp_avg if fp_avg > 0 else float('inf')
 
     print(f"  PyMuPDF:  {pm_avg*1000:.2f}ms  ({img_count} images)")
-    print(f"  fastpdf:  {fp_avg*1000:.2f}ms  ({len(images)} images)")
+    print(f"  flashpdf:  {fp_avg*1000:.2f}ms  ({len(images)} images)")
     print(f"  加速比:   {speedup:.1f}x")
     print(f"  目标:     ≥ 5x")
     print(f"  结果:     {'✅ 达标' if speedup >= 5 else '❌ 未达标'}")
@@ -117,7 +117,7 @@ def bench_image_bytes():
 
 def bench_multi_file():
     """多文件吞吐量: 单文件 vs 多文件并行"""
-    import fastpdf
+    import flashpdf
     import fitz
 
     print("\n" + "=" * 60)
@@ -137,21 +137,21 @@ def bench_multi_file():
     # Warmup
     for _ in range(WARMUP):
         for pdf in pdf_files:
-            fastpdf.extract(pdf, include_images=False)
+            flashpdf.extract(pdf, include_images=False)
 
     # Sequential: one by one
     seq_times = []
     for _ in range(ITERATIONS):
         start = time.perf_counter()
         for pdf in pdf_files:
-            fastpdf.extract(pdf, include_images=False)
+            flashpdf.extract(pdf, include_images=False)
         seq_times.append(time.perf_counter() - start)
 
     # Parallel: extract_many with file_parallel=True
     par_times = []
     for _ in range(ITERATIONS):
         start = time.perf_counter()
-        results = list(fastpdf.extract_many(pdf_files, file_parallel=True, include_images=False))
+        results = list(flashpdf.extract_many(pdf_files, file_parallel=True, include_images=False))
         par_times.append(time.perf_counter() - start)
 
     seq_avg = statistics.mean(seq_times)
@@ -170,7 +170,7 @@ def bench_multi_file():
 
 
 if __name__ == "__main__":
-    print("fastpdf 性能基准测试")
+    print("flashpdf 性能基准测试")
     print(f"测试文件: {PDF_PATH}")
     print(f"迭代次数: {ITERATIONS} (warmup {WARMUP})")
     print()

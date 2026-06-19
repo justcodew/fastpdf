@@ -1,15 +1,15 @@
 """
-End-to-end test: verify fastpdf can extract text and images from real PDFs.
+End-to-end test: verify flashpdf can extract text and images from real PDFs.
 """
 import sys
 from pathlib import Path
 
 def test_extraction(pdf_path: str) -> bool:
-    """Test that fastpdf can extract from a PDF without errors."""
-    import fastpdf
+    """Test that flashpdf can extract from a PDF without errors."""
+    import flashpdf
 
     try:
-        blocks, images = fastpdf.extract(pdf_path, include_images=True)
+        blocks, images = flashpdf.extract(pdf_path, include_images=True)
     except Exception as e:
         print(f"  FAIL: extraction error: {e}")
         return False

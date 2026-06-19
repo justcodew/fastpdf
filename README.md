@@ -1,4 +1,4 @@
-# fastpdf
+# flashpdf
 
 世界上最快的 PDF 文本与图像提取引擎。
 
@@ -15,15 +15,15 @@ Rust 核心 + Python 绑定，输出与 PyMuPDF 兼容的 `blocks` 和 `images` 
 ## 安装
 
 ```bash
-pip install fastpdf-tool
+pip install flashpdf-tool
 ```
 
 从源码构建：
 
 ```bash
 # 需要 Rust 工具链 (https://rustup.rs)
-git clone https://github.com/yourname/fastpdf.git
-cd fastpdf
+git clone https://github.com/yourname/flashpdf.git
+cd flashpdf
 pip install maturin
 maturin develop --release
 ```
@@ -33,10 +33,10 @@ maturin develop --release
 ### Python
 
 ```python
-import fastpdf
+import flashpdf
 
 # 单文档提取
-blocks, images = fastpdf.extract("document.pdf")
+blocks, images = flashpdf.extract("document.pdf")
 
 for block in blocks:
     for line in block["lines"]:
@@ -48,7 +48,7 @@ for img in images:
     # img['image'] 是原始字节 (JPEG/PNG)
 
 # 批量提取 (文件级并行)
-for path, blocks, images in fastpdf.extract_many(
+for path, blocks, images in flashpdf.extract_many(
     ["a.pdf", "b.pdf", "c.pdf"],
     file_parallel=True,
     include_images=False
@@ -59,7 +59,7 @@ for path, blocks, images in fastpdf.extract_many(
 ### Rust
 
 ```rust
-use fastpdf_core::{extract, ExtractOptions};
+use flashpdf_core::{extract, ExtractOptions};
 
 let options = ExtractOptions {
     page_parallel: true,
@@ -83,7 +83,7 @@ for page in &result.pages {
 
 ## API 参考
 
-### `fastpdf.extract(path, **options)`
+### `flashpdf.extract(path, **options)`
 
 从单个 PDF 文件提取文本和图像。
 
@@ -141,7 +141,7 @@ for page in &result.pages {
 ]
 ```
 
-### `fastpdf.extract_many(paths, **options)`
+### `flashpdf.extract_many(paths, **options)`
 
 批量提取多个 PDF 文件。
 
@@ -212,7 +212,7 @@ PDF 文件
 | 图像字节提取 (含解码) | ≥ PyMuPDF 5x | **11.2x** ✅ |
 | 多文件吞吐量 | 近核心数线性增长 | **~3.2x** (10 文件) |
 
-> ¹ fastpdf 的 `extract()` 是一步到位调用（文本+图像），无法单独衡量图像元数据提取耗时。
+> ¹ flashpdf 的 `extract()` 是一步到位调用（文本+图像），无法单独衡量图像元数据提取耗时。
 
 详见 [性能基准报告](docs/BENCHMARK.md)。
 
@@ -220,13 +220,13 @@ PDF 文件
 
 ```bash
 # 运行全部测试
-cargo test -p fastpdf-core
+cargo test -p flashpdf-core
 
 # 运行特定测试
-cargo test -p fastpdf-core test_cmap
+cargo test -p flashpdf-core test_cmap
 
 # 性能基准
-cargo bench -p fastpdf-core
+cargo bench -p flashpdf-core
 ```
 
 当前测试：**85 个测试全部通过** ✅

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Generate flamegraph for fastpdf extraction
+# Generate flamegraph for flashpdf extraction
 # Usage: ./scripts/flamegraph.sh [pdf_path]
 #
 # Prerequisites:
@@ -26,8 +26,8 @@ if command -v flamegraph &> /dev/null; then
         --bench extraction \
         -- --bench "full_extract_single_page" \
         --profile-time 10 \
-        -o "$OUTPUT_DIR/fastpdf_flamegraph.svg"
-    echo "Flamegraph saved to: $OUTPUT_DIR/fastpdf_flamegraph.svg"
+        -o "$OUTPUT_DIR/flashpdf_flamegraph.svg"
+    echo "Flamegraph saved to: $OUTPUT_DIR/flashpdf_flamegraph.svg"
 else
     echo "flamegraph not found. Install with: cargo install flamegraph"
     echo "Alternatively, use criterion's built-in profiling:"

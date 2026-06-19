@@ -1,5 +1,5 @@
 """
-Comprehensive benchmark: fastpdf vs ritz vs GoMuPDF vs PyMuPDF
+Comprehensive benchmark: flashpdf vs ritz vs GoMuPDF vs PyMuPDF
 Tests: text extraction, image extraction, combined
 """
 import time
@@ -9,9 +9,9 @@ import subprocess
 import json
 
 sys.path.insert(0, "/Users/xiongzhaolong/Downloads/claude-pro/202604-job/pdf_pro/ritz/python")
-sys.path.insert(0, "/Users/xiongzhaolong/Downloads/claude_pro/fastpdf/python")
+sys.path.insert(0, "/Users/xiongzhaolong/Downloads/claude-pro/202604-job/pdf_pro/flashpdf/python")
 
-PDF_PATH = "/Users/xiongzhaolong/Downloads/claude_pro/fastpdf/test_data/2604.11578v1.pdf"
+PDF_PATH = "/Users/xiongzhaolong/Downloads/claude-pro/202604-job/pdf_pro/flashpdf/test_data/2604.11578v1.pdf"
 GOMUPDF_BIN = "/tmp/bench_gomupdf"
 ITERS = 10
 WARMUP = 2
@@ -97,19 +97,19 @@ def bench_ritz_combined(pdf_path):
     del doc
 
 
-# ============ fastpdf ============
+# ============ flashpdf ============
 
-def bench_fastpdf_text(pdf_path):
-    import fastpdf
-    fastpdf.extract(pdf_path, include_images=False)
+def bench_flashpdf_text(pdf_path):
+    import flashpdf
+    flashpdf.extract(pdf_path, include_images=False)
 
-def bench_fastpdf_images(pdf_path):
-    import fastpdf
-    fastpdf.extract(pdf_path, include_images=True)
+def bench_flashpdf_images(pdf_path):
+    import flashpdf
+    flashpdf.extract(pdf_path, include_images=True)
 
-def bench_fastpdf_combined(pdf_path):
-    import fastpdf
-    fastpdf.extract(pdf_path, include_images=True)
+def bench_flashpdf_combined(pdf_path):
+    import flashpdf
+    flashpdf.extract(pdf_path, include_images=True)
 
 
 # ============ GoMuPDF ============
@@ -137,17 +137,17 @@ def print_table(title, results):
     """results: list of (name, avg, std)"""
     base = results[0][1]  # PyMuPDF as base
     print_header(title)
-    print(f"  {'Engine':<12} {'Avg (ms)':>10} {'Std (ms)':>10} {'vs PyMuPDF':>12} {'vs fastpdf':>12}")
+    print(f"  {'Engine':<12} {'Avg (ms)':>10} {'Std (ms)':>10} {'vs PyMuPDF':>12} {'vs flashpdf':>12}")
     print(f"  {'-' * 58}")
     for name, avg, std in results:
         speedup = base / avg if avg > 0 else 0
-        fastpdf_ratio = results[2][1] / avg if avg > 0 and len(results) > 2 else 0
-        if name == "fastpdf":
+        flashpdf_ratio = results[2][1] / avg if avg > 0 and len(results) > 2 else 0
+        if name == "flashpdf":
             print(f"  {name:<12} {avg*1000:>10.2f} {std*1000:>10.2f} {speedup:>10.2f}x  {'---':>12}")
         elif name == "PyMuPDF":
-            print(f"  {name:<12} {avg*1000:>10.2f} {std*1000:>10.2f} {'1.00x':>12} {fastpdf_ratio:>10.2f}x")
+            print(f"  {name:<12} {avg*1000:>10.2f} {std*1000:>10.2f} {'1.00x':>12} {flashpdf_ratio:>10.2f}x")
         else:
-            print(f"  {name:<12} {avg*1000:>10.2f} {std*1000:>10.2f} {speedup:>10.2f}x {fastpdf_ratio:>10.2f}x")
+            print(f"  {name:<12} {avg*1000:>10.2f} {std*1000:>10.2f} {speedup:>10.2f}x {flashpdf_ratio:>10.2f}x")
 
 
 def main():
@@ -160,7 +160,7 @@ def main():
 
     import fitz
     import ritz
-    import fastpdf
+    import flashpdf
 
     # Count pages/images
     doc = fitz.open(pdf_path)
@@ -176,12 +176,12 @@ def main():
     # Text extraction
     pymupdf_avg, pymupdf_std = run_bench(bench_pymupdf_text, pdf_path)
     ritz_avg, ritz_std = run_bench(bench_ritz_text, pdf_path)
-    fastpdf_avg, fastpdf_std = run_bench(bench_fastpdf_text, pdf_path)
+    flashpdf_avg, flashpdf_std = run_bench(bench_flashpdf_text, pdf_path)
 
     text_results = [
         ("PyMuPDF", pymupdf_avg, pymupdf_std),
         ("ritz", ritz_avg, ritz_std),
-        ("fastpdf", fastpdf_avg, fastpdf_std),
+        ("flashpdf", flashpdf_avg, flashpdf_std),
     ]
 
     if gomupdf_available:
@@ -193,12 +193,12 @@ def main():
     # Image extraction
     pymupdf_avg, pymupdf_std = run_bench(bench_pymupdf_images, pdf_path)
     ritz_avg, ritz_std = run_bench(bench_ritz_images, pdf_path)
-    fastpdf_avg, fastpdf_std = run_bench(bench_fastpdf_images, pdf_path)
+    flashpdf_avg, flashpdf_std = run_bench(bench_flashpdf_images, pdf_path)
 
     img_results = [
         ("PyMuPDF", pymupdf_avg, pymupdf_std),
         ("ritz", ritz_avg, ritz_std),
-        ("fastpdf", fastpdf_avg, fastpdf_std),
+        ("flashpdf", flashpdf_avg, flashpdf_std),
     ]
 
     if gomupdf_available:
@@ -210,12 +210,12 @@ def main():
     # Combined
     pymupdf_avg, pymupdf_std = run_bench(bench_pymupdf_combined, pdf_path)
     ritz_avg, ritz_std = run_bench(bench_ritz_combined, pdf_path)
-    fastpdf_avg, fastpdf_std = run_bench(bench_fastpdf_combined, pdf_path)
+    flashpdf_avg, flashpdf_std = run_bench(bench_flashpdf_combined, pdf_path)
 
     combined_results = [
         ("PyMuPDF", pymupdf_avg, pymupdf_std),
         ("ritz", ritz_avg, ritz_std),
-        ("fastpdf", fastpdf_avg, fastpdf_std),
+        ("flashpdf", flashpdf_avg, flashpdf_std),
     ]
 
     if gomupdf_available:
@@ -227,14 +227,14 @@ def main():
     # Summary
     print_header("SUMMARY")
     print(f"""
-  fastpdf: {fastpdf_avg*1000:.2f}ms (text+images)
+  flashpdf: {flashpdf_avg*1000:.2f}ms (text+images)
   ritz:    {ritz_avg*1000:.2f}ms
   PyMuPDF: {pymupdf_avg*1000:.2f}ms
   GoMuPDF: {gomupdf_avg*1000:.2f}ms (if available)
 
-  fastpdf vs PyMuPDF: {pymupdf_avg/fastpdf_avg:.1f}x
-  fastpdf vs ritz:    {ritz_avg/fastpdf_avg:.1f}x
-  fastpdf vs GoMuPDF: {gomupdf_avg/fastpdf_avg:.1f}x (if available)
+  flashpdf vs PyMuPDF: {pymupdf_avg/flashpdf_avg:.1f}x
+  flashpdf vs ritz:    {ritz_avg/flashpdf_avg:.1f}x
+  flashpdf vs GoMuPDF: {gomupdf_avg/flashpdf_avg:.1f}x (if available)
 """)
 
 

@@ -1,8 +1,8 @@
-use fastpdf_core::parser::object::parse_object_from_bytes;
-use fastpdf_core::parser::xref::{
+use flashpdf_core::parser::object::parse_object_from_bytes;
+use flashpdf_core::parser::xref::{
     find_startxref, is_standard_xref, parse_xref_table, XrefEntryType,
 };
-use fastpdf_core::types::PdfObject;
+use flashpdf_core::types::PdfObject;
 
 // ─── Helper: build a minimal PDF byte stream ───
 

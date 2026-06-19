@@ -1,4 +1,4 @@
-# PDF 文本与图像提取引擎（fastpdf）— 终极性能版开发任务书
+# PDF 文本与图像提取引擎（flashpdf）— 终极性能版开发任务书
 
 > **使命**：打造世界上速度最快、且**不牺牲任何文本/图像提取信息**的 PDF 提取引擎。  
 > **目标**：Rust 实现极致性能，Python 绑定，输出与 PyMuPDF (fitz) 结构兼容的 `blocks` 和 `images`，支持多页/多文件并行、多层次优化（含可选 GPU 加速）。  
@@ -43,7 +43,7 @@ PDF 文件 → mmap 映射
 | **lopdf 线程安全** | 页面快照模式（不共享 `Document`） | 若验证 `Document: Send+Sync`，可用 `Arc` 共享 |
 | **字体编码边界** | 仅标准字体 (阶段 2a) | 阶段 2a 测试中文本丢失率 > 5% 时，**必须启动 2b** |
 | **Form XObject** | 至少展开一层递归，否则警告 | 不可静默跳过 Form 中的文本/图像 |
-| **内存控制** | 大文档+页并行时自动分批（页数>100 时每批 50 页），`include_images=False` 推荐 | 用户可通过 `FASTPDF_BATCH_SIZE` 调整或设为 0 强制不分批 |
+| **内存控制** | 大文档+页并行时自动分批（页数>100 时每批 50 页），`include_images=False` 推荐 | 用户可通过 `FLASHPDF_BATCH_SIZE` 调整或设为 0 强制不分批 |
 | **鲁棒性** | 宽容解析：未知操作符/畸变流只警告，绝不 panic；字符解码失败降级到 U+FFFD | — |
 
 ## 3. 核心算法摘要
@@ -74,10 +74,10 @@ PDF 文件 → mmap 映射
 ## 4. API 设计（与 PyMuPDF 兼容）
 
 ```python
-import fastpdf
+import flashpdf
 
 # 单文档提取
-blocks, images = fastpdf.extract(
+blocks, images = flashpdf.extract(
     "doc.pdf",
     page_parallel=True,      # 页级并行
     include_images=True,     # 是否填充图像字节
@@ -85,7 +85,7 @@ blocks, images = fastpdf.extract(
 )
 
 # 批量提取（流式迭代器，低内存）
-for path, blocks, images in fastpdf.extract_many(
+for path, blocks, images in flashpdf.extract_many(
     ["a.pdf", "b.pdf"],
     file_parallel=True,      # 文件级并行
     page_parallel=False,     # 内部页面串行 (避免嵌套并行)
@@ -196,7 +196,7 @@ Block {
 - [ ] 文件级并行：extract_many 实现，默认文件并行+页面串行
 - [ ] GIL 释放：所有 Rust 函数通过 `allow_threads` 调用
 - [ ] **异步预读**：后台线程提前 mmap 下一个文件
-- [ ] **大文档内存保护**：当 `page_parallel=True`、`include_images=True` 且页数 > 100 时，自动分批并行（每批 50 页）。用户可通过 `FASTPDF_BATCH_SIZE` 环境变量调整，设为 0 强制不分批。
+- [ ] **大文档内存保护**：当 `page_parallel=True`、`include_images=True` 且页数 > 100 时，自动分批并行（每批 50 页）。用户可通过 `FLASHPDF_BATCH_SIZE` 环境变量调整，设为 0 强制不分批。
 
 ### 阶段 6：性能极致化与综合测试 (3天)
 - [ ] 用 flamegraph 定位并消除最后的热点
@@ -209,7 +209,7 @@ Block {
   - 扫描件（仅图像）3-5
   - 表格密集型 3-5
   - 东亚文档（竖排/特殊字体）2-3
-- [ ] **结构 Diff 脚本**：自动递归比较 fastpdf 与 PyMuPDF 输出，统计：
+- [ ] **结构 Diff 脚本**：自动递归比较 flashpdf 与 PyMuPDF 输出，统计：
   - 块/行/span 数量差异率
   - bbox 平均绝对误差 (MAE)
   - 文本内容一致性（忽略空格差异）

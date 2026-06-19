@@ -1,4 +1,4 @@
-# fastpdf 待完成事项
+# flashpdf 待完成事项
 
 ## 当前状态
 
@@ -18,9 +18,9 @@
 
 ## 性能验证（阶段 6）
 
-- [x] **PyMuPDF 对比测试**：同一批 PDF 分别用 fastpdf 和 PyMuPDF 提取
+- [x] **PyMuPDF 对比测试**：同一批 PDF 分别用 flashpdf 和 PyMuPDF 提取
   - 单词重叠率: 91.6%
-  - 速度: ~30x (fastpdf 0.006s vs PyMuPDF 0.189s)
+  - 速度: ~30x (flashpdf 0.006s vs PyMuPDF 0.189s)
   - 关键修复: TJ 字间距空格检测、/Resources 间接引用解析、Type0 CID 宽度计算
   > 脚本: tests/pymupdf_comparison.py | 报告: docs/BENCHMARK.md
 - [x] **criterion 性能基准**：各场景耗时对比 (纯文本/图文混排/扫描件/表格/中日韩)
@@ -39,7 +39,7 @@
   - macOS x86_64 / ARM64
   - Windows x86_64
   - 通过 maturin + GitHub Actions 自动构建
-- [x] **PyPI 发布**：`pip install fastpdf`
+- [x] **PyPI 发布**：`pip install flashpdf`
 - [x] **CI/CD**：GitHub Actions 自动测试 + 构建 + 发布
   > .github/workflows/ci.yml + build-wheels.yml
 

@@ -1,8 +1,8 @@
-# fastpdf API 文档
+# flashpdf API 文档
 
 ## Python API
 
-### `fastpdf.extract(path, page_parallel=True, include_images=True, gpu=False, batch_size=50)`
+### `flashpdf.extract(path, page_parallel=True, include_images=True, gpu=False, batch_size=50)`
 
 从单个 PDF 文件提取文本块和图像。
 
@@ -19,21 +19,21 @@
 **示例：**
 
 ```python
-import fastpdf
+import flashpdf
 
 # 基本用法
-blocks, images = fastpdf.extract("report.pdf")
+blocks, images = flashpdf.extract("report.pdf")
 
 # 仅提取文本（更快，更省内存）
-blocks, _ = fastpdf.extract("report.pdf", include_images=False)
+blocks, _ = flashpdf.extract("report.pdf", include_images=False)
 
 # 大文档优化
-blocks, images = fastpdf.extract("huge.pdf", batch_size=100)
+blocks, images = flashpdf.extract("huge.pdf", batch_size=100)
 ```
 
 ---
 
-### `fastpdf.extract_many(paths, file_parallel=True, page_parallel=False, include_images=False, gpu=False, batch_size=50)`
+### `flashpdf.extract_many(paths, file_parallel=True, page_parallel=False, include_images=False, gpu=False, batch_size=50)`
 
 批量提取多个 PDF 文件。支持文件级并行和异步预读。
 
@@ -51,13 +51,13 @@ blocks, images = fastpdf.extract("huge.pdf", batch_size=100)
 **示例：**
 
 ```python
-import fastpdf
+import flashpdf
 import glob
 
 paths = glob.glob("pdfs/*.pdf")
 
 # 文件级并行，仅提取文本
-for path, blocks, images in fastpdf.extract_many(paths, include_images=False):
+for path, blocks, images in flashpdf.extract_many(paths, include_images=False):
     text = " ".join(
         span["text"]
         for b in blocks
@@ -123,10 +123,10 @@ for path, blocks, images in fastpdf.extract_many(paths, include_images=False):
 
 ## Rust API
 
-### `fastpdf_core::extract(path, options) -> Result<ExtractResult>`
+### `flashpdf_core::extract(path, options) -> Result<ExtractResult>`
 
 ```rust
-use fastpdf_core::{extract, ExtractOptions};
+use flashpdf_core::{extract, ExtractOptions};
 
 let options = ExtractOptions::default();
 let result = extract("document.pdf", &options)?;
@@ -146,10 +146,10 @@ for page in &result.pages {
 }
 ```
 
-### `fastpdf_core::extract_many(paths, options) -> Vec<(String, Result<ExtractResult>)>`
+### `flashpdf_core::extract_many(paths, options) -> Vec<(String, Result<ExtractResult>)>`
 
 ```rust
-use fastpdf_core::{extract_many, ExtractOptions};
+use flashpdf_core::{extract_many, ExtractOptions};
 
 let paths = vec!["a.pdf", "b.pdf", "c.pdf"];
 let options = ExtractOptions {
@@ -183,7 +183,7 @@ pub struct ExtractOptions {
 底层文档对象，支持直接操作：
 
 ```rust
-use fastpdf_core::Document;
+use flashpdf_core::Document;
 
 let doc = Document::open("document.pdf")?;
 

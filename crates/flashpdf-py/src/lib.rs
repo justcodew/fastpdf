@@ -1,9 +1,9 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
 
-/// FastPDF — high-performance PDF text and image extraction.
+/// FlashPDF — high-performance PDF text and image extraction.
 #[pymodule]
-fn fastpdf(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn flashpdf(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract, m)?)?;
     m.add_function(wrap_pyfunction!(extract_many, m)?)?;
     m.add_function(wrap_pyfunction!(extract_links, m)?)?;
@@ -22,7 +22,7 @@ fn extract<'py>(
     gpu: bool,
     batch_size: usize,
 ) -> PyResult<Bound<'py, PyList>> {
-    let options = fastpdf_core::ExtractOptions {
+    let options = flashpdf_core::ExtractOptions {
         page_parallel,
         file_parallel: false,
         include_images,
@@ -30,7 +30,7 @@ fn extract<'py>(
         batch_size,
     };
 
-    let result = fastpdf_core::extract(path, &options)
+    let result = flashpdf_core::extract(path, &options)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
     render_extract_result(py, &result)
@@ -48,7 +48,7 @@ fn extract_many<'py>(
     gpu: bool,
     batch_size: usize,
 ) -> PyResult<Bound<'py, PyList>> {
-    let options = fastpdf_core::ExtractOptions {
+    let options = flashpdf_core::ExtractOptions {
         page_parallel,
         file_parallel,
         include_images,
@@ -57,7 +57,7 @@ fn extract_many<'py>(
     };
 
     let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
-    let results = fastpdf_core::extract_many(&path_refs, &options);
+    let results = flashpdf_core::extract_many(&path_refs, &options);
 
     let output = PyList::empty(py);
     for (path, result) in results {
@@ -82,10 +82,10 @@ fn extract_many<'py>(
 /// Extract hyperlinks from a PDF file.
 #[pyfunction]
 fn extract_links<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyList>> {
-    let doc = fastpdf_core::Document::open(path)
+    let doc = flashpdf_core::Document::open(path)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
-    let links = fastpdf_core::extract_links(&doc)
+    let links = flashpdf_core::extract_links(&doc)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
     let output = PyList::empty(py);
@@ -103,7 +103,7 @@ fn extract_links<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyList
 /// Render an ExtractResult into a Python list of [blocks, images].
 fn render_extract_result<'py>(
     py: Python<'py>,
-    result: &fastpdf_core::ExtractResult,
+    result: &flashpdf_core::ExtractResult,
 ) -> PyResult<Bound<'py, PyList>> {
     let blocks_list = PyList::empty(py);
     let images_list = PyList::empty(py);
@@ -147,10 +147,10 @@ fn render_extract_result<'py>(
             img_dict.set_item("ext", &img.ext)?;
 
             match &img.data {
-                Some(fastpdf_core::ImageData::Raw(data)) => {
+                Some(flashpdf_core::ImageData::Raw(data)) => {
                     img_dict.set_item("image", PyBytes::new(py, data))?;
                 }
-                Some(fastpdf_core::ImageData::Png(data)) => {
+                Some(flashpdf_core::ImageData::Png(data)) => {
                     img_dict.set_item("image", PyBytes::new(py, data))?;
                 }
                 _ => {

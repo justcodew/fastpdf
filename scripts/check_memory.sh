@@ -1,12 +1,12 @@
 #!/bin/bash
-# Memory leak check for fastpdf using valgrind (Linux) or leaks (macOS)
+# Memory leak check for flashpdf using valgrind (Linux) or leaks (macOS)
 # Usage: ./scripts/check_memory.sh [pdf_path]
 
 set -e
 
 PDF_PATH="${1:-test_data/2604.11578v1.pdf}"
 
-echo "Memory check for fastpdf"
+echo "Memory check for flashpdf"
 echo "PDF: $PDF_PATH"
 echo ""
 
@@ -14,16 +14,16 @@ echo ""
 cargo build --release 2>/dev/null
 
 # Create a simple test binary that exercises the extraction
-TEST_BINARY="target/release/fastpdf_memtest"
+TEST_BINARY="target/release/flashpdf_memtest"
 
-cat > /tmp/fastpdf_memtest.rs << 'EOF'
+cat > /tmp/flashpdf_memtest.rs << 'EOF'
 use std::env;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
     let path = args.get(1).map(|s| s.as_str()).unwrap_or("test.pdf");
 
-    let options = fastpdf_core::ExtractOptions {
+    let options = flashpdf_core::ExtractOptions {
         page_parallel: false,
         file_parallel: false,
         include_images: true,
@@ -33,7 +33,7 @@ fn main() {
 
     // Run extraction multiple times to detect leaks
     for i in 0..5 {
-        match fastpdf_core::extract(path, &options) {
+        match flashpdf_core::extract(path, &options) {
             Ok(result) => {
                 let total_chars: usize = result.pages.iter()
                     .map(|p| p.blocks.iter()
@@ -71,7 +71,7 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     else
         echo "Running leaks on test suite..."
         MallocStackLogging=1 cargo test --release 2>/dev/null
-        leaks fastpdf_core 2>&1 | head -50 || echo "No leaks found or leaks tool unavailable"
+        leaks flashpdf_core 2>&1 | head -50 || echo "No leaks found or leaks tool unavailable"
     fi
 elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
     echo "Running valgrind..."
@@ -82,7 +82,7 @@ elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
         else
             echo "Running valgrind on test suite..."
             cargo test --release 2>/dev/null
-            valgrind --leak-check=full target/release/deps/fastpdf_core-* 2>&1 | tail -30
+            valgrind --leak-check=full target/release/deps/flashpdf_core-* 2>&1 | tail -30
         fi
     else
         echo "valgrind not found. Install with: sudo apt install valgrind"

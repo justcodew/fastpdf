@@ -1,5 +1,5 @@
 [package]
-name = "fastpdf-core"
+name = "flashpdf-core"
 version.workspace = true
 edition.workspace = true
 

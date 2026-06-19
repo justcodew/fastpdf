@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/fastpdf-core", "crates/fastpdf-py"]
+members = ["crates/flashpdf-core", "crates/flashpdf-py"]
 resolver = "2"
 
 [workspace.package]

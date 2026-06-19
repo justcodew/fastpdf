@@ -1,4 +1,4 @@
-use fastpdf_core::{extract, ExtractOptions};
+use flashpdf_core::{extract, ExtractOptions};
 use std::time::Instant;
 
 #[test]
@@ -57,7 +57,7 @@ fn test_extract_real_pdf() {
         })
         .sum();
 
-    println!("=== fastpdf extraction results ===");
+    println!("=== flashpdf extraction results ===");
     println!("Pages:        {}", result.pages.len());
     println!("Blocks:       {}", total_blocks);
     println!("Lines:        {}", total_lines);
@@ -112,7 +112,7 @@ fn test_extract_real_pdf_parallel() {
     let result = extract(path, &options).expect("Failed to extract PDF");
     let elapsed = start.elapsed();
 
-    println!("\n=== fastpdf parallel extraction ===");
+    println!("\n=== flashpdf parallel extraction ===");
     println!("Pages: {}", result.pages.len());
     println!("Time:  {:.2?}", elapsed);
     println!(
@@ -147,7 +147,7 @@ fn test_extract_real_pdf_with_images() {
 
     let total_images: usize = result.pages.iter().map(|p| p.images.len()).sum();
 
-    println!("\n=== fastpdf with images ===");
+    println!("\n=== flashpdf with images ===");
     println!("Pages:  {}", result.pages.len());
     println!("Images: {}", total_images);
     println!("Time:   {:.2?}", elapsed);

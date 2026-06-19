@@ -1,4 +1,4 @@
-# fastpdf — 自研极致性能 PDF 提取引擎方案书
+# flashpdf — 自研极致性能 PDF 提取引擎方案书
 
 > **项目定位**：从零构建全球最快的 PDF 文本与图像提取引擎，输出与 PyMuPDF 兼容的 `blocks` 与 `images`，不牺牲任何精度，支持多页/多文件并行及可选 GPU 加速。
 
@@ -92,10 +92,10 @@ mmap 文件 ──→ 自研解析器 (顺序: trailer → xref → 构建偏移
 ## 5. 输出 API 与兼容性
 
 ```python
-import fastpdf
+import flashpdf
 
 # 单文档
-blocks, images = fastpdf.extract(
+blocks, images = flashpdf.extract(
     "doc.pdf",
     page_parallel=True,
     include_images=True,
@@ -103,7 +103,7 @@ blocks, images = fastpdf.extract(
 )
 
 # 批量流式
-for path, blocks, images in fastpdf.extract_many(
+for path, blocks, images in flashpdf.extract_many(
     paths,
     file_parallel=True,
     page_parallel=False,
@@ -161,7 +161,7 @@ for path, blocks, images in fastpdf.extract_many(
 
 ### 阶段 5：并行化与 I/O 优化（2 天）
 - [ ] 页面/文件并行，GIL 释放
-- [ ] 异步预读，大文档自动分批保护 (FASTPDF_BATCH_SIZE)
+- [ ] 异步预读，大文档自动分批保护 (FLASHPDF_BATCH_SIZE)
 
 ### 阶段 6：性能验证与测试（3 天）
 - [ ] flamegraph 热点消除，criterion 基准

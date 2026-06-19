@@ -76,12 +76,12 @@ jobs:
         shell: bash
         run: |
           maturin build --release --out dist
-          pip install --find-links dist fastpdf-tool
+          pip install --find-links dist flashpdf
 
       - name: Run Python tests
         shell: bash
         run: |
-          python -c "import fastpdf; print(f'fastpdf version: {fastpdf.__version__}')"
+          python -c "import flashpdf; print(f'flashpdf version: {flashpdf.__version__}')"
           python tests/end_to_end.py test_data || echo "No test PDFs available"
 
   benchmark:

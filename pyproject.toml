@@ -3,14 +3,14 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "fastpdf-tool"
+name = "flashpdf"
 version = "0.1.0"
 description = "The fastest PDF text and image extraction engine. Rust core + Python bindings."
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
 authors = [
-    {name = "fastpdf contributors"},
+    {name = "flashpdf contributors"},
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -29,7 +29,7 @@ classifiers = [
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
-manifest-path = "crates/fastpdf-py/Cargo.toml"
+manifest-path = "crates/flashpdf-py/Cargo.toml"
 python-source = "python"
 
 [tool.maturin.target.'cfg(target_os = "linux")']

@@ -1,5 +1,5 @@
 """
-PyMuPDF comparison test: extract text from PDFs using both fastpdf and PyMuPDF,
+PyMuPDF comparison test: extract text from PDFs using both flashpdf and PyMuPDF,
 then compare block/line/span counts, bbox accuracy, and text consistency.
 """
 import json
@@ -37,11 +37,11 @@ def extract_with_pymupdf(pdf_path: str) -> dict:
     return {"pages": pages}
 
 
-def extract_with_fastpdf(pdf_path: str) -> dict:
-    """Extract using fastpdf."""
-    import fastpdf
+def extract_with_flashpdf(pdf_path: str) -> dict:
+    """Extract using flashpdf."""
+    import flashpdf
 
-    blocks, images = fastpdf.extract(pdf_path, include_images=True)
+    blocks, images = flashpdf.extract(pdf_path, include_images=True)
     return {
         "pages": [{
             "blocks": blocks,
@@ -89,19 +89,19 @@ def extract_text(result: dict) -> str:
     return "\n".join(texts)
 
 
-def compare_results(pymupdf_result: dict, fastpdf_result: dict, pdf_name: str) -> dict:
+def compare_results(pymupdf_result: dict, flashpdf_result: dict, pdf_name: str) -> dict:
     """Compare extraction results from both engines."""
     pymupdf_stats = count_elements(pymupdf_result)
-    fastpdf_stats = count_elements(fastpdf_result)
+    flashpdf_stats = count_elements(flashpdf_result)
 
     pymupdf_text = extract_text(pymupdf_result)
-    fastpdf_text = extract_text(fastpdf_result)
+    flashpdf_text = extract_text(flashpdf_result)
 
     # Calculate differences
-    block_diff = abs(pymupdf_stats["blocks"] - fastpdf_stats["blocks"])
-    line_diff = abs(pymupdf_stats["lines"] - fastpdf_stats["lines"])
-    span_diff = abs(pymupdf_stats["spans"] - fastpdf_stats["spans"])
-    char_diff = abs(pymupdf_stats["chars"] - fastpdf_stats["chars"])
+    block_diff = abs(pymupdf_stats["blocks"] - flashpdf_stats["blocks"])
+    line_diff = abs(pymupdf_stats["lines"] - flashpdf_stats["lines"])
+    span_diff = abs(pymupdf_stats["spans"] - flashpdf_stats["spans"])
+    char_diff = abs(pymupdf_stats["chars"] - flashpdf_stats["chars"])
 
     block_pct = (block_diff / max(pymupdf_stats["blocks"], 1)) * 100
     line_pct = (line_diff / max(pymupdf_stats["lines"], 1)) * 100
@@ -110,22 +110,22 @@ def compare_results(pymupdf_result: dict, fastpdf_result: dict, pdf_name: str) -
     # Text similarity using SequenceMatcher (handles insertions/deletions)
     import difflib
     pymupdf_clean = pymupdf_text.replace(" ", "").replace("\n", "")
-    fastpdf_clean = fastpdf_text.replace(" ", "").replace("\n", "")
-    matcher = difflib.SequenceMatcher(None, pymupdf_clean, fastpdf_clean)
+    flashpdf_clean = flashpdf_text.replace(" ", "").replace("\n", "")
+    matcher = difflib.SequenceMatcher(None, pymupdf_clean, flashpdf_clean)
     text_similarity = matcher.ratio() * 100
 
     # Also compute word-level overlap
     pymupdf_words = set(pymupdf_text.lower().split())
-    fastpdf_words = set(fastpdf_text.lower().split())
+    flashpdf_words = set(flashpdf_text.lower().split())
     if pymupdf_words:
-        word_overlap = len(pymupdf_words & fastpdf_words) / len(pymupdf_words) * 100
+        word_overlap = len(pymupdf_words & flashpdf_words) / len(pymupdf_words) * 100
     else:
         word_overlap = 0.0
 
     return {
         "pdf": pdf_name,
         "pymupdf": pymupdf_stats,
-        "fastpdf": fastpdf_stats,
+        "flashpdf": flashpdf_stats,
         "differences": {
             "block_count_pct": round(block_pct, 2),
             "line_count_pct": round(line_pct, 2),
@@ -150,7 +150,7 @@ def run_comparison(test_dir: str, output_file: str = None):
 
     results = []
     total_pymupdf_time = 0
-    total_fastpdf_time = 0
+    total_flashpdf_time = 0
 
     for pdf_path in pdf_files:
         pdf_name = pdf_path.name
@@ -167,23 +167,23 @@ def run_comparison(test_dir: str, output_file: str = None):
             print(f"  PyMuPDF error: {e}")
             continue
 
-        # fastpdf extraction
+        # flashpdf extraction
         try:
             start = time.perf_counter()
-            fastpdf_result = extract_with_fastpdf(str(pdf_path))
-            fastpdf_time = time.perf_counter() - start
-            total_fastpdf_time += fastpdf_time
-            print(f"  fastpdf: {fastpdf_time:.3f}s")
+            flashpdf_result = extract_with_flashpdf(str(pdf_path))
+            flashpdf_time = time.perf_counter() - start
+            total_flashpdf_time += flashpdf_time
+            print(f"  flashpdf: {flashpdf_time:.3f}s")
         except Exception as e:
-            print(f"  fastpdf error: {e}")
+            print(f"  flashpdf error: {e}")
             continue
 
         # Compare
-        comparison = compare_results(pymupdf_result, fastpdf_result, pdf_name)
+        comparison = compare_results(pymupdf_result, flashpdf_result, pdf_name)
         comparison["timing"] = {
             "pymupdf_sec": round(pymupdf_time, 4),
-            "fastpdf_sec": round(fastpdf_time, 4),
-            "speedup": round(pymupdf_time / max(fastpdf_time, 0.0001), 2),
+            "flashpdf_sec": round(flashpdf_time, 4),
+            "speedup": round(pymupdf_time / max(flashpdf_time, 0.0001), 2),
         }
         results.append(comparison)
 
@@ -213,9 +213,9 @@ def run_comparison(test_dir: str, output_file: str = None):
         print(f"Avg text similarity: {avg_text:.1f}%")
         print(f"Avg word overlap:    {avg_word:.1f}%")
         print(f"Total PyMuPDF time: {total_pymupdf_time:.3f}s")
-        print(f"Total fastpdf time: {total_fastpdf_time:.3f}s")
-        if total_fastpdf_time > 0:
-            print(f"Overall speedup:    {total_pymupdf_time / total_fastpdf_time:.2f}x")
+        print(f"Total flashpdf time: {total_flashpdf_time:.3f}s")
+        if total_flashpdf_time > 0:
+            print(f"Overall speedup:    {total_pymupdf_time / total_flashpdf_time:.2f}x")
 
         # Save results
         if output_file:

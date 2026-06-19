@@ -1,12 +1,12 @@
 [package]
-name = "fastpdf-py"
+name = "flashpdf-py"
 version.workspace = true
 edition.workspace = true
 
 [lib]
-name = "fastpdf"
+name = "flashpdf"
 crate-type = ["cdylib"]
 
 [dependencies]
-fastpdf-core = { path = "../fastpdf-core" }
+flashpdf-core = { path = "../flashpdf-core" }
 pyo3 = { version = "0.24", features = ["extension-module", "abi3", "abi3-py39"] }

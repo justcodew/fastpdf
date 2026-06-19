@@ -1,5 +1,5 @@
 """
-Comprehensive benchmark: fastpdf vs ritz vs PyMuPDF
+Comprehensive benchmark: flashpdf vs ritz vs PyMuPDF
 Tests: text, images, document open, page load, multi-file parallel
 """
 import time
@@ -8,9 +8,9 @@ import statistics
 import os
 
 sys.path.insert(0, "/Users/xiongzhaolong/Downloads/claude-pro/202604-job/pdf_pro/ritz/python")
-sys.path.insert(0, "/Users/xiongzhaolong/Downloads/claude_pro/fastpdf/python")
+sys.path.insert(0, "/Users/xiongzhaolong/Downloads/claude-pro/202604-job/pdf_pro/flashpdf/python")
 
-PDF_PATH = "/Users/xiongzhaolong/Downloads/claude_pro/fastpdf/test_data/2604.11578v1.pdf"
+PDF_PATH = "/Users/xiongzhaolong/Downloads/claude-pro/202604-job/pdf_pro/flashpdf/test_data/2604.11578v1.pdf"
 ITERS = 10
 WARMUP = 2
 
@@ -52,9 +52,9 @@ def bench_doc_open_ritz(pdf_path):
     doc = ritz.open(pdf_path)
     del doc
 
-def bench_doc_open_fastpdf(pdf_path):
-    import fastpdf
-    blocks, images = fastpdf.extract(pdf_path, include_images=False)
+def bench_doc_open_flashpdf(pdf_path):
+    import flashpdf
+    blocks, images = flashpdf.extract(pdf_path, include_images=False)
 
 
 # ============ 2. Text Extraction ============
@@ -74,9 +74,9 @@ def bench_text_ritz(pdf_path):
         page.get_text("dict")
     del doc
 
-def bench_text_fastpdf(pdf_path):
-    import fastpdf
-    blocks, images = fastpdf.extract(pdf_path, include_images=False)
+def bench_text_flashpdf(pdf_path):
+    import flashpdf
+    blocks, images = flashpdf.extract(pdf_path, include_images=False)
 
 
 # ============ 3. Text + Images Combined ============
@@ -99,9 +99,9 @@ def bench_combined_ritz(pdf_path):
         page.get_images(include_data=True)
     del doc
 
-def bench_combined_fastpdf(pdf_path):
-    import fastpdf
-    blocks, images = fastpdf.extract(pdf_path, include_images=True)
+def bench_combined_flashpdf(pdf_path):
+    import flashpdf
+    blocks, images = flashpdf.extract(pdf_path, include_images=True)
 
 
 # ============ 4. Page Load (per page) ============
@@ -176,10 +176,10 @@ def bench_multi_ritz(paths):
             page.get_text("dict")
         del doc
 
-def bench_multi_fastpdf(paths):
-    import fastpdf
+def bench_multi_flashpdf(paths):
+    import flashpdf
     for p in paths:
-        fastpdf.extract(p, include_images=False)
+        flashpdf.extract(p, include_images=False)
 
 
 def main():
@@ -192,7 +192,7 @@ def main():
 
     import fitz
     import ritz
-    import fastpdf
+    import flashpdf
 
     # Count pages/images for context
     doc = fitz.open(pdf_path)
@@ -205,19 +205,19 @@ def main():
     print_header("1. Document Open")
     pymupdf_avg, pymupdf_std = run_bench(bench_doc_open_pymupdf, pdf_path)
     ritz_avg, ritz_std = run_bench(bench_doc_open_ritz, pdf_path)
-    fastpdf_avg, fastpdf_std = run_bench(bench_doc_open_fastpdf, pdf_path)
+    flashpdf_avg, flashpdf_std = run_bench(bench_doc_open_flashpdf, pdf_path)
     print_row("PyMuPDF", pymupdf_avg*1000, pymupdf_std*1000, pymupdf_avg*1000)
     print_row("ritz", ritz_avg*1000, ritz_std*1000, pymupdf_avg*1000)
-    print_row("fastpdf", fastpdf_avg*1000, fastpdf_std*1000, pymupdf_avg*1000)
+    print_row("flashpdf", flashpdf_avg*1000, flashpdf_std*1000, pymupdf_avg*1000)
 
     # 2. Text Extraction
     print_header("2. Text Extraction (get_text dict)")
     pymupdf_avg, pymupdf_std = run_bench(bench_text_pymupdf, pdf_path)
     ritz_avg, ritz_std = run_bench(bench_text_ritz, pdf_path)
-    fastpdf_avg, fastpdf_std = run_bench(bench_text_fastpdf, pdf_path)
+    flashpdf_avg, flashpdf_std = run_bench(bench_text_flashpdf, pdf_path)
     print_row("PyMuPDF", pymupdf_avg*1000, pymupdf_std*1000, pymupdf_avg*1000)
     print_row("ritz", ritz_avg*1000, ritz_std*1000, pymupdf_avg*1000)
-    print_row("fastpdf", fastpdf_avg*1000, fastpdf_std*1000, pymupdf_avg*1000)
+    print_row("flashpdf", flashpdf_avg*1000, flashpdf_std*1000, pymupdf_avg*1000)
 
     # 3. Plain Text Extraction
     print_header("3. Plain Text (get_text)")
@@ -225,7 +225,7 @@ def main():
     ritz_avg, ritz_std = run_bench(bench_plaintext_ritz, pdf_path)
     print_row("PyMuPDF", pymupdf_avg*1000, pymupdf_std*1000, pymupdf_avg*1000)
     print_row("ritz", ritz_avg*1000, ritz_std*1000, pymupdf_avg*1000)
-    print("  (fastpdf: dict-only API, no plain text mode)")
+    print("  (flashpdf: dict-only API, no plain text mode)")
 
     # 4. Page Load
     print_header("4. Page Load (load_page x14)")
@@ -233,7 +233,7 @@ def main():
     ritz_avg, ritz_std = run_bench(bench_page_load_ritz, pdf_path)
     print_row("PyMuPDF", pymupdf_avg*1000, pymupdf_std*1000, pymupdf_avg*1000)
     print_row("ritz", ritz_avg*1000, ritz_std*1000, pymupdf_avg*1000)
-    print("  (fastpdf: no page-level API, full extraction only)")
+    print("  (flashpdf: no page-level API, full extraction only)")
 
     # 5. Links
     print_header("5. Links Extraction")
@@ -241,31 +241,31 @@ def main():
     ritz_avg, ritz_std = run_bench(bench_links_ritz, pdf_path)
     print_row("PyMuPDF", pymupdf_avg*1000, pymupdf_std*1000, pymupdf_avg*1000)
     print_row("ritz", ritz_avg*1000, ritz_std*1000, pymupdf_avg*1000)
-    print("  (fastpdf: no links API)")
+    print("  (flashpdf: no links API)")
 
     # 6. Combined Text + Images
     print_header("6. Text + Images Combined")
     pymupdf_avg, pymupdf_std = run_bench(bench_combined_pymupdf, pdf_path)
     ritz_avg, ritz_std = run_bench(bench_combined_ritz, pdf_path)
-    fastpdf_avg, fastpdf_std = run_bench(bench_combined_fastpdf, pdf_path)
+    flashpdf_avg, flashpdf_std = run_bench(bench_combined_flashpdf, pdf_path)
     print_row("PyMuPDF", pymupdf_avg*1000, pymupdf_std*1000, pymupdf_avg*1000)
     print_row("ritz", ritz_avg*1000, ritz_std*1000, pymupdf_avg*1000)
-    print_row("fastpdf", fastpdf_avg*1000, fastpdf_std*1000, pymupdf_avg*1000)
+    print_row("flashpdf", flashpdf_avg*1000, flashpdf_std*1000, pymupdf_avg*1000)
 
     # 7. Multi-document (same file 3x to simulate)
     print_header("7. Multi-document (3x same file)")
     paths = [pdf_path] * 3
     pymupdf_avg, pymupdf_std = run_bench(bench_multi_pymupdf, paths, iters=5, warmup=1)
     ritz_avg, ritz_std = run_bench(bench_multi_ritz, paths, iters=5, warmup=1)
-    fastpdf_avg, fastpdf_std = run_bench(bench_multi_fastpdf, paths, iters=5, warmup=1)
+    flashpdf_avg, flashpdf_std = run_bench(bench_multi_flashpdf, paths, iters=5, warmup=1)
     print_row("PyMuPDF", pymupdf_avg*1000, pymupdf_std*1000, pymupdf_avg*1000)
     print_row("ritz", ritz_avg*1000, ritz_std*1000, pymupdf_avg*1000)
-    print_row("fastpdf", fastpdf_avg*1000, fastpdf_std*1000, pymupdf_avg*1000)
+    print_row("flashpdf", flashpdf_avg*1000, flashpdf_std*1000, pymupdf_avg*1000)
 
     # Summary
     print_header("SUMMARY")
     print("""
-  fastpdf 优势:
+  flashpdf 优势:
     - 纯 Rust 自研解析器，无 MuPDF C 引擎依赖
     - 零拷贝 mmap + SIMD 字节扫描 + 快速浮点解析
     - 文本提取是核心强项 (20x+)
@@ -276,9 +276,9 @@ def main():
     - 图像格式支持更全 (渲染管线)
 
   结论:
-    - 纯文本/数据提取场景: fastpdf 远超 ritz
+    - 纯文本/数据提取场景: flashpdf 远超 ritz
     - 需要渲染/注释等 MuPDF 功能: ritz 是更好选择
-    - 两者定位不同，fastpdf 专注提取速度
+    - 两者定位不同，flashpdf 专注提取速度
 """)
 
 

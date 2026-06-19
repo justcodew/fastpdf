@@ -1,5 +1,5 @@
-use fastpdf_core::parse_object_from_bytes;
-use fastpdf_core::types::PdfObject;
+use flashpdf_core::parse_object_from_bytes;
+use flashpdf_core::types::PdfObject;
 
 // ─── Integer tests ───
 
