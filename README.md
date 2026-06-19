@@ -15,7 +15,7 @@ Rust 核心 + Python 绑定，输出与 PyMuPDF 兼容的 `blocks` 和 `images` 
 ## 安装
 
 ```bash
-pip install flashpdf-tool
+pip install flashpdf
 ```
 
 从源码构建：
