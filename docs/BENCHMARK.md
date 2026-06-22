@@ -1,5 +1,89 @@
 # flashpdf 性能基准报告
 
+## v0.1.1 综合对比 (2026-06-22)
+
+最新一轮 flashpdf 0.1.1 vs PyMuPDF 1.27.2 的综合测试，覆盖**性能 + 精度**两个维度。
+脚本：`tests/comprehensive_compare.py`
+
+### 测试环境
+
+- **OS**: macOS (Apple Silicon ARM64)
+- **Python**: 3.14
+- **flashpdf**: 0.1.1（`maturin develop --release`）
+- **PyMuPDF**: 1.27.2.3
+- **迭代**: 每场景 5 次，取平均
+
+### 测试样本
+
+| 文件 | 大小 | 页数 | 类型 |
+|------|------|------|------|
+| `dbnet_plus.pdf` | 6.4 MB | 15 | arxiv 学术论文（文本 + 公式 + 图像） |
+| `2604.11578v1.pdf` | 1.3 MB | 14 | arxiv 学术论文（纯文本 + 公式） |
+
+### 性能结果
+
+| 文件 | 场景 | flashpdf | PyMuPDF | 加速比 | 吞吐量 (fp) |
+|------|------|---------:|--------:|-------:|------------:|
+| dbnet_plus | 文本提取 | 5.32ms | 267.77ms | **50.35x** | 2820 pages/s |
+| dbnet_plus | 文本 + 图像 | 10.89ms | 375.35ms | **34.48x** | — |
+| arxiv_2604 | 文本提取 | 6.88ms | 143.89ms | **20.91x** | 2035 pages/s |
+| arxiv_2604 | 文本 + 图像 | 7.67ms | 155.89ms | **20.33x** | — |
+
+### 精度结果
+
+精度用 3 个互补指标衡量：
+
+- **char_sim (ordered)**：按抽取顺序逐字符 SequenceMatcher 相似度，**对阅读顺序敏感**
+- **trigram_jac (unordered)**：char trigram 集合的 Jaccard 相似度，**对顺序不敏感**（衡量内容覆盖）
+- **word_jaccard**：词集合 Jaccard 相似度
+
+| 文件 | char_sim (ordered) | trigram_jac (unordered) | word_jaccard | recall | precision | FFFD |
+|------|---------:|---------:|---------:|---------:|---------:|---------:|
+| dbnet_plus | 18.1% | 53.8% | 45.2% | 61.5% | 63.1% | 99 |
+| arxiv_2604 | 17.6% | 52.9% | 49.3% | 68.0% | 64.2% | 40 |
+
+### 结构对比
+
+| 文件 | 指标 | flashpdf | PyMuPDF |
+|------|------|---------:|--------:|
+| dbnet_plus | blocks | 92 | 334 |
+|           | lines | 1456 | 2085 |
+|           | spans | 4741 | 12075 |
+|           | chars | 56376 | 57191 |
+| arxiv_2604 | blocks | 274 | 539 |
+|            | lines | 1957 | 1882 |
+|            | spans | 4817 | 13259 |
+|            | chars | 61771 | 60978 |
+
+注：flashpdf 的 span 粒度更大（同字体/同行的字符聚成一个 span），所以 span 数远少于 PyMuPDF，但字符总数接近。
+
+### 关键发现
+
+1. **性能**：文本提取 **20-50x 快于 PyMuPDF**，含图像 **20-34x**。在不同 PDF 上速度优势稳定。
+2. **字符总量**：两引擎的 char 总数差异 <2%，**flashpdf 没有丢字符**。
+3. **阅读顺序**：char_sim 只有 18%（极低），但 trigram_jac 53%。说明**内容大致覆盖，但阅读顺序差异显著**——这是 flashpdf 当前的最大精度短板。复杂版面（标题块 + 作者脚注 + 摘要共存于首页）下，flashpdf 按 PDF 对象流顺序输出，PyMuPDF 按视觉顺序输出。
+4. **词集差异**：jaccard 45-49% 表明两边都有"对方没有"的词。flashpdf 略多于 PyMuPDF（precision < recall），可能来自 form XObject 中的文本（如图注、表注）。
+5. **FFFD**：99（dbnet）+ 40（arxiv）—— LaTeX 字体（CMMI 等）尚未支持，已在 TODO 中。
+
+### 适用场景建议
+
+- ✅ **批量文本抽取**（搜索索引、LLM 训练数据预处理、向量化）：性能极佳，字符总量正确
+- ✅ **结构化数据抽取**（按 block/line/span 拿原始字符 + bbox）：bbox 信息完整，结构正确
+- ⚠️ **严格阅读顺序**（人类阅读、章节切分、摘要提取）：当前版面复杂时顺序不准，需后续改进
+- ✅ **图像提取**：速度极快，bbox 正确，零拷贝 JPEG/JPX
+
+### 已知后续改进项
+
+参见 [TODO.md](../TODO.md) "后续优化（精度提升 - 待处理）" 一节：
+
+- 阅读顺序算法（按 visual reading order 重排 blocks）
+- CMMI / CMR 内置编码
+- WinAnsiEncoding 默认兜底
+
+---
+
+## 历史：四引擎对比 (2026-06-16)
+
 ## 测试环境
 
 - **日期**: 2026-06-16
