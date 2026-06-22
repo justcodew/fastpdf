@@ -134,6 +134,13 @@ impl FontInfo {
             if b >= 0x80 {
                 return char::from(b);
             }
+            // Control chars (< 0x20): PyMuPDF outputs the raw byte as a char
+            // rather than U+FFFD when no mapping exists. Common for fonts like
+            // CMEX10 that have unmapped glyph slots (e.g. byte 0x0C in a
+            // "no glyph" position becomes '\x0c' in pm output).
+            if b < 0x20 {
+                return b as char;
+            }
         }
 
         // 5. Fallback
