@@ -705,10 +705,19 @@ fn execute_operator_full(
                             let m = Matrix::new(1.0, 0.0, 0.0, 1.0, shift, 0.0);
                             state.tm = m.mul(&state.tm);
 
-                            // Large kerning values indicate word boundaries.
-                            // Threshold adapts to font size: smaller fonts need smaller gaps.
-                            let threshold = -150.0 * (state.font_size / 12.0).max(0.5);
-                            if tj < threshold && !result.chars.is_empty() {
+                            // Emit a synthetic space when the kerning value
+                            // is in the word-spacing range (about 0.13–0.6 em
+                            // for typical Latin text). Outside this range:
+                            //  - Magnitude too small (< 0.13 em): kerning
+                            //    within a word, no space.
+                            //  - Magnitude too large (> 0.6 em): heading or
+                            //    paragraph indent — PyMuPDF does NOT emit a
+                            //    space here, e.g. "[(I.)]TJ [-1000(Intro)]TJ"
+                            //    stays as "I.Introduction" in pm output.
+                            let fs = (state.font_size / 12.0).max(0.5);
+                            let min_sep = -150.0 * fs;
+                            let max_sep = -700.0 * fs;
+                            if tj < min_sep && tj > max_sep && !result.chars.is_empty() {
                                 emit_space(state, result);
                             }
                         }

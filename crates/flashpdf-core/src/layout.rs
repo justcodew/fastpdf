@@ -243,11 +243,13 @@ fn make_line(spans: Vec<TextSpan>) -> TextLine {
             let min_size = curr.size.min(prev.size).max(1.0);
             let max_size = curr.size.max(prev.size).max(1.0);
             // (a) MuPDF-style gap trigger, but BANDED: insert a space only when
-            // the gap is in the word-boundary range (0.15–0.6 em). Below 0.15 em
-            // chars are kerned together; above 0.6 em the gap is a tab/heading
-            // alignment, and PyMuPDF does not insert a space there (it emits
-            // "I.Introduction" for section-number tabs, not "I. Introduction").
-            let gap_triggers = gap > min_size * 0.15 && gap < min_size * 0.6;
+            // the gap is in the word-boundary range (0.25–0.6 em). Below 0.25 em
+            // chars are kerned together or part of a tight cluster like the
+            // Roman numeral "II" (two separate Tj operators with a small gap);
+            // above 0.6 em the gap is a tab/heading alignment, and PyMuPDF
+            // does not insert a space there (it emits "I.Introduction" for
+            // section-number tabs, not "I. Introduction").
+            let gap_triggers = gap > min_size * 0.25 && gap < min_size * 0.6;
             // (b) Size-change transition: size differs by > 25% AND prev does
             // not already end with the smaller char (so we don't separate a
             // superscript from its anchor like "Briegel" + "1").
@@ -788,9 +790,11 @@ mod tests {
         assert_eq!(blocks[0].lines.len(), 1);
         assert_eq!(blocks[0].lines[0].spans.len(), 2);
         assert_eq!(blocks[0].lines[0].spans[0].text, "Hi");
-        // Visual gap between "Hi" and "Wo" exceeds SPACE_DIST threshold,
-        // so make_line inserts a leading space on the second span.
-        assert_eq!(blocks[0].lines[0].spans[1].text, " Wo");
+        // Gap between "Hi" and "Wo" is 38pt = 3.17em at 12pt — far above
+        // the 0.6em upper bound of the word-boundary band. PyMuPDF treats
+        // gaps this large as heading/tab alignment and does NOT insert a
+        // space, so we don't either.
+        assert_eq!(blocks[0].lines[0].spans[1].text, "Wo");
     }
 
     #[test]
