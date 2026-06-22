@@ -467,15 +467,22 @@ pub fn reading_order_sort(blocks: Vec<TextBlock>, page_rect: [f64; 4]) -> Vec<Te
     if blocks.len() <= 1 {
         return blocks;
     }
-    // Defensive filter: drop blocks whose bbox is far outside the page rect
-    // (e.g. vector graphics / Type 3 glyphs mis-clustered as text). Such
-    // blocks have coordinates in the millions and would otherwise obliterate
-    // every gap the XY-cut looks for. Allow 2x page dimension of slack on each
-    // side to tolerate minor coordinate drift / mis-scaled content.
+    // Defensive filter: drop blocks whose bbox is far outside the page rect.
+    // Two categories of "outside":
+    //   (a) WAY outside (millions): Type 3 glyphs / vector graphics mis-clustered
+    //       as text — these would obliterate every gap the XY-cut looks for.
+    //       Allow 2x page dimension of slack.
+    //   (b) Moderately outside (~10%+ overflow on one edge): typically rotated
+    //       sidebar watermarks like the arXiv banner whose bbox is the bounding
+    //       box of rotated text and extends far beyond the page. These are
+    //       noise for layout purposes — drop them so they don't displace
+    //       legitimate body blocks in the reading order.
     let page_w = (page_rect[2] - page_rect[0]).abs().max(1.0);
     let page_h = (page_rect[3] - page_rect[1]).abs().max(1.0);
     let slack_x = page_w * 2.0;
     let slack_y = page_h * 2.0;
+    let margin_x = page_w * 0.1;
+    let margin_y = page_h * 0.1;
     let blocks: Vec<TextBlock> = blocks
         .into_iter()
         .filter(|b| {
@@ -488,6 +495,10 @@ pub fn reading_order_sort(blocks: Vec<TextBlock>, page_rect: [f64; 4]) -> Vec<Te
                 && x1 <= page_rect[2] + slack_x
                 && y0 >= page_rect[1] - slack_y
                 && y1 <= page_rect[3] + slack_y
+                && x1 <= page_rect[2] + margin_x
+                && x0 >= page_rect[0] - margin_x
+                && y1 <= page_rect[3] + margin_y
+                && y0 >= page_rect[1] - margin_y
         })
         .collect();
     if blocks.len() <= 1 {
