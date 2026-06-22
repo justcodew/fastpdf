@@ -50,126 +50,64 @@ pub fn cluster_chars(chars: &[CharInfo], font: &str, font_size: f64, color: u32)
 }
 
 /// Detect column boundaries at the span level.
-/// Uses a smoothed density histogram of span left-edge X positions.
-/// Finds the two highest peaks and splits at the valley between them.
-/// This handles cases where formula content fills the gap between columns.
+/// Uses a sweep-line approach: project span X-intervals, find the largest
+/// empty X-gap, and (if it's wide enough relative to the page) treat it
+/// as the column boundary.
+///
+/// Why sweep-line over histogram+peaks: the histogram approach finds the
+/// two densest X positions, but in real documents those can both be in
+/// the SAME column (e.g. body-text peak + paragraph-indent peak, or two
+/// peaks within the left column separated by a figure). The sweep-line
+/// finds an actually-empty vertical band, which only exists between two
+/// distinct columns.
 fn detect_columns_from_spans(spans: &[TextSpan]) -> Vec<Vec<TextSpan>> {
     if spans.len() < 6 {
         return vec![spans.to_vec()];
     }
 
-    let x_positions: Vec<f64> = spans.iter().map(|s| s.bbox[0]).collect();
-
-    let x_min = x_positions.iter().cloned().fold(f64::MAX, f64::min);
-    let x_max = x_positions.iter().cloned().fold(f64::MIN, f64::max);
+    let x_min = spans.iter().map(|s| s.bbox[0]).fold(f64::MAX, f64::min);
+    let x_max = spans.iter().map(|s| s.bbox[2]).fold(f64::MIN, f64::max);
     let x_range = x_max - x_min;
 
     if x_range < 100.0 {
         return vec![spans.to_vec()];
     }
 
-    // Build histogram with ~15px bins
-    let num_bins = ((x_range / 15.0) as usize).max(20).min(200);
-    let bin_width = x_range / num_bins as f64;
-    let mut histogram = vec![0u32; num_bins];
+    // Sort intervals by start; sweep tracking the running max end.
+    let mut ivs: Vec<(f64, f64)> = spans.iter().map(|s| (s.bbox[0], s.bbox[2])).collect();
+    ivs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
-    for &x in &x_positions {
-        let bin = ((x - x_min) / bin_width) as usize;
-        let bin = bin.min(num_bins - 1);
-        histogram[bin] += 1;
-    }
-
-    // Smooth with radius 5 to reduce noise
-    let smooth_radius = 5usize.min(num_bins / 4);
-    let mut smoothed = vec![0.0f64; num_bins];
-    for i in 0..num_bins {
-        let lo = i.saturating_sub(smooth_radius);
-        let hi = (i + smooth_radius + 1).min(num_bins);
-        for j in lo..hi {
-            smoothed[i] += histogram[j] as f64;
-        }
-        smoothed[i] /= (hi - lo) as f64;
-    }
-
-    // Find local maxima (bins higher than both neighbors)
-    let mut peaks: Vec<(usize, f64)> = Vec::new();
-    for i in 1..num_bins - 1 {
-        if smoothed[i] > smoothed[i - 1] && smoothed[i] > smoothed[i + 1] {
-            peaks.push((i, smoothed[i]));
-        }
-    }
-
-    // Also consider edge bins as peaks if they're high
-    if smoothed[0] > smoothed[1] {
-        peaks.push((0, smoothed[0]));
-    }
-    if smoothed[num_bins - 1] > smoothed[num_bins - 2] {
-        peaks.push((num_bins - 1, smoothed[num_bins - 1]));
-    }
-
-    // Sort peaks by height (descending)
-    peaks.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-
-    // Take the two highest peaks that are far enough apart (>= 10 bins)
-    if peaks.len() < 2 {
-        return vec![spans.to_vec()];
-    }
-
-    let mut peak1 = peaks[0].0;
-    let mut peak2 = peaks[1].0;
-
-    // If the top two peaks are too close, find the next best peak that's far enough
-    if peak2.abs_diff(peak1) < 10 {
-        for &(p, _v) in peaks.iter().skip(2) {
-            if p.abs_diff(peak1) >= 10 {
-                peak2 = p;
-                break;
+    let mut max_gap = 0.0;
+    let mut max_gap_pos = 0.0;
+    let mut cur_end = ivs[0].1;
+    for &(s, e) in ivs.iter().skip(1) {
+        if s > cur_end {
+            let g = s - cur_end;
+            if g > max_gap {
+                max_gap = g;
+                max_gap_pos = cur_end + g * 0.5;
             }
         }
+        cur_end = cur_end.max(e);
     }
 
-    // Ensure peak1 < peak2
-    if peak1 > peak2 {
-        std::mem::swap(&mut peak1, &mut peak2);
-    }
-
-    // Peaks must be far enough apart (at least 10 bins ≈ 150px)
-    if peak2.abs_diff(peak1) < 10 {
+    // Gap must be at least 4% of x range to be a real column boundary.
+    // 4% of a 500px page = 20px, a typical inter-column gutter width.
+    if max_gap < x_range * 0.04 {
         return vec![spans.to_vec()];
     }
 
-    // Find the valley (minimum density) between the two peaks
-    let mut valley = peak1;
-    let mut valley_density = smoothed[peak1];
-    for i in peak1..=peak2 {
-        if smoothed[i] < valley_density {
-            valley_density = smoothed[i];
-            valley = i;
-        }
-    }
-
-    // Valley must be meaningfully lower than both peaks.
-    // Use a relaxed threshold since formula content can fill the gap between columns.
-    let min_peak = smoothed[peak1].min(smoothed[peak2]);
-    if valley_density > min_peak * 0.85 {
-        return vec![spans.to_vec()];
-    }
-
-    let boundary = x_min + (valley as f64 + 0.5) * bin_width;
-
-    // Split spans at the boundary
+    // Split spans by left edge.
     let mut left = Vec::new();
     let mut right = Vec::new();
-
     for s in spans {
-        if s.bbox[0] < boundary {
+        if s.bbox[0] < max_gap_pos {
             left.push(s.clone());
         } else {
             right.push(s.clone());
         }
     }
 
-    // Both columns must have at least 2 spans
     if left.len() < 2 || right.len() < 2 {
         return vec![spans.to_vec()];
     }
@@ -289,14 +227,35 @@ fn make_line(spans: Vec<TextSpan>) -> TextLine {
     let mut sorted = spans;
     sorted.sort_by(|a, b| a.bbox[0].partial_cmp(&b.bbox[0]).unwrap());
 
-    // Insert space between adjacent spans when there's a visual gap (MuPDF
-    // SPACE_DIST heuristic). Without this, "Hello" + "World" on the same
-    // line with separate Tj operators concatenates to "HelloWorld".
+    // Insert space between adjacent spans when:
+    //   (a) there's a visual gap larger than 0.15 * min_size (MuPDF SPACE_DIST),
+    // OR
+    //   (b) the two spans differ significantly in size (sub/superscript
+    //       transition like "...Briegel1 Hendrik..." where the "1" is at
+    //       7pt and "Hendrik" at 10pt — geometrically tight but visually
+    //       a word boundary).
+    // Without this, "Hello" + "World" on the same line with separate Tj
+    // operators concatenates to "HelloWorld", and superscripts glue to
+    // the following word ("1Hendrik").
     if sorted.len() > 1 {
-        let space_threshold = sorted[0].size * 0.2;
         for i in 1..sorted.len() {
-            let gap = sorted[i].bbox[0] - sorted[i - 1].bbox[2];
-            if gap > space_threshold && !sorted[i].text.starts_with(' ') {
+            if sorted[i].text.starts_with(' ') {
+                continue;
+            }
+            let prev = &sorted[i - 1];
+            let curr = &sorted[i];
+            let gap = curr.bbox[0] - prev.bbox[2];
+            let min_size = curr.size.min(prev.size).max(1.0);
+            let max_size = curr.size.max(prev.size).max(1.0);
+            // (a) MuPDF-style: positive horizontal pen movement > 0.15 em.
+            let gap_triggers = gap > min_size * 0.15;
+            // (b) Size-change transition: size differs by > 25% AND prev does
+            // not already end with the smaller char (so we don't separate a
+            // superscript from its anchor like "Briegel" + "1").
+            let size_ratio = (max_size - min_size) / max_size;
+            let prev_ends_small = prev.text.chars().last().map(|c| c.is_numeric()).unwrap_or(false);
+            let size_triggers = size_ratio > 0.25 && !prev_ends_small;
+            if gap_triggers || size_triggers {
                 sorted[i].text.insert(0, ' ');
             }
         }
@@ -349,29 +308,13 @@ fn make_block(lines: Vec<TextLine>) -> TextBlock {
 /// merge the two lines by removing the hyphen and combining the text.
 /// Runs repeatedly until no more merges are possible (handles consecutive hyphens).
 fn merge_hyphenated_lines(blocks: Vec<TextBlock>) -> Vec<TextBlock> {
-    let mut result = Vec::with_capacity(blocks.len());
-
-    for block in blocks {
-        if block.lines.len() < 2 {
-            result.push(block);
-            continue;
-        }
-
-        // Run merge repeatedly until stable
-        let mut lines = block.lines;
-        loop {
-            let (merged, count) = merge_hyphens_pass(lines);
-            lines = merged;
-            if count == 0 {
-                break;
-            }
-        }
-
-        let bbox = compute_bbox_from_lines(&lines);
-        result.push(TextBlock { bbox, lines });
-    }
-
-    result
+    // Hyphenation merge is disabled: the heuristic (line ends with '-' and
+    // next starts with lowercase) removes hyphens from compound words like
+    // "measurement-based" that happen to break at the hyphen, producing
+    // "measurementbased". PyMuPDF preserves the hyphen when joining, so
+    // matching their behavior means leaving the text alone.
+    let _ = merge_hyphens_pass;
+    blocks
 }
 
 /// Single pass of hyphenation merge. Returns (merged lines, number of merges).

@@ -222,15 +222,17 @@ fn extract_single_page(
         HashMap::new()
     };
 
-    // Get primary font info for clustering.
-    // NOTE: font_size here is a page-level default used only as the threshold
-    // basis for layout heuristics. Per-char sizes (from Tf operators) live on
-    // CharInfo.size and are available for future per-char-aware clustering.
-    let (font_name, font_size) = font_map
+    // Get primary font info for clustering. The font_size is a page-level
+    // scalar used as the threshold basis for layout heuristics (span gap,
+    // line gap, block gap). The historical 12pt fallback works well in
+    // practice because it sits above typical body text (9-10pt) and below
+    // title text (12-14pt), giving balanced thresholds. Per-char sizes
+    // remain available on CharInfo.size for future per-char clustering.
+    let font_name = font_map
         .iter()
         .next()
-        .map(|(name, _info)| (name.clone(), 12.0))
-        .unwrap_or_else(|| ("Helvetica".to_string(), 12.0));
+        .map(|(name, _info)| name.clone())
+        .unwrap_or_else(|| "Helvetica".to_string());
 
     // Scan content stream with font-aware decoding + Form XObject recursion
     let scan_result = crate::parser::content_stream::scan_content_stream_full(
@@ -239,6 +241,8 @@ fn extract_single_page(
         &xobjects,
         0,
     );
+
+    let font_size = 12.0;
 
     // Cluster chars into blocks
     let blocks = cluster_chars(&scan_result.chars, &font_name, font_size, 0);
