@@ -12,6 +12,22 @@ Rust 核心 + Python 绑定，输出与 PyMuPDF 兼容的 `blocks` 和 `images` 
 - **健壮容错**：xref 损坏时自动 memchr 全文扫描恢复
 - **PyMuPDF 兼容**：输出结构与 PyMuPDF 完全一致，零迁移成本
 
+## 适用范围（务必先读）
+
+flashpdf 是**纯数据提取工具**，不是 PDF 渲染器。明确边界：
+
+- ✅ **文本提取**：按页面顺序输出结构化 blocks/lines/spans（含 bbox、字体、字号、颜色）
+- ✅ **嵌入图像提取**：抽取 PDF 内部以 `Do` 操作符引用的位图对象
+  （JPEG/PNG/JPX），保留**原始字节**与四角变换 bbox——即"图片对象"，
+  **不是**"页面截图"
+- ❌ **不支持页面渲染**：不能把整页渲染成位图（`Page.get_pixmap()` 等价物）
+- ❌ **不支持内容重建**：不会把矢量图、路径、文字光栅化为图像
+
+如果你的需求是"得到每页的 PNG 预览图"或"扫描件 OCR 前的位图输入"，
+请使用 PyMuPDF / ritz / GoMuPDF 等带渲染引擎的库——渲染需要完整的
+PDF interpreter + 光栅化器（MuPDF C 库），这与 flashpdf "纯解析、零渲染"
+的设计目标相悖。
+
 ## 安装
 
 ```bash
@@ -125,6 +141,10 @@ for page in &result.pages {
 ```
 
 #### images 结构
+
+每个元素是 PDF 内部通过 `Do` 操作符引用的**嵌入位图对象**（JPEG/PNG/JPX），
+**不是页面渲染结果**。如果你需要"页面截图"或"整页光栅化"，请改用带渲染
+引擎的库（PyMuPDF / ritz / GoMuPDF）。
 
 ```python
 [
