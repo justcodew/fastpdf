@@ -851,23 +851,24 @@ fn emit_string(
     let mut i = 0;
 
     while i < bytes.len() {
-        let (c, code_bytes) = if is_cid && i + 1 < bytes.len() {
+        let (decoded_chars, code_bytes) = if is_cid && i + 1 < bytes.len() {
             // 2-byte CID code
-            let _code = ((bytes[i] as u32) << 8) | (bytes[i + 1] as u32);
-            let decoded =
-                font_info.map_or('\u{FFFD}', |f| f.decode_char(&[bytes[i], bytes[i + 1]]));
+            let decoded = font_info.map_or_else(
+                || vec!['\u{FFFD}'],
+                |f| f.decode_chars(&[bytes[i], bytes[i + 1]]),
+            );
             (decoded, vec![bytes[i], bytes[i + 1]])
         } else {
             // Single byte
             let decoded = font_info.map_or_else(
                 || {
                     if bytes[i] < 128 {
-                        bytes[i] as char
+                        vec![bytes[i] as char]
                     } else {
-                        '\u{FFFD}'
+                        vec!['\u{FFFD}']
                     }
                 },
-                |f| f.decode_char(&[bytes[i]]),
+                |f| f.decode_chars(&[bytes[i]]),
             );
             (decoded, vec![bytes[i]])
         };
@@ -898,95 +899,18 @@ fn emit_string(
             .unwrap_or(char_width_default);
         let char_height = font_size;
 
-        // Expand ligatures: ﬁ → fi, ﬂ → fl, ﬃ → ffi, ﬄ → ffl
-        match c {
-            '\u{FB01}' => {
-                // fi ligature
-                let half = char_width * 0.5;
-                result.chars.push(CharInfo {
-                    c: 'f',
-                    bbox: [x, y, x + half, y + char_height],
-                    size: font_size,
-                });
-                result.chars.push(CharInfo {
-                    c: 'i',
-                    bbox: [x + half, y, x + char_width, y + char_height],
-                    size: font_size,
-                });
-            }
-            '\u{FB02}' => {
-                // fl ligature
-                let half = char_width * 0.5;
-                result.chars.push(CharInfo {
-                    c: 'f',
-                    bbox: [x, y, x + half, y + char_height],
-                    size: font_size,
-                });
-                result.chars.push(CharInfo {
-                    c: 'l',
-                    bbox: [x + half, y, x + char_width, y + char_height],
-                    size: font_size,
-                });
-            }
-            '\u{FB03}' => {
-                // ffi ligature
-                let third = char_width / 3.0;
-                result.chars.push(CharInfo {
-                    c: 'f',
-                    bbox: [x, y, x + third, y + char_height],
-                    size: font_size,
-                });
-                result.chars.push(CharInfo {
-                    c: 'f',
-                    bbox: [x + third, y, x + third * 2.0, y + char_height],
-                    size: font_size,
-                });
-                result.chars.push(CharInfo {
-                    c: 'i',
-                    bbox: [x + third * 2.0, y, x + char_width, y + char_height],
-                    size: font_size,
-                });
-            }
-            '\u{FB04}' => {
-                // ffl ligature
-                let third = char_width / 3.0;
-                result.chars.push(CharInfo {
-                    c: 'f',
-                    bbox: [x, y, x + third, y + char_height],
-                    size: font_size,
-                });
-                result.chars.push(CharInfo {
-                    c: 'f',
-                    bbox: [x + third, y, x + third * 2.0, y + char_height],
-                    size: font_size,
-                });
-                result.chars.push(CharInfo {
-                    c: 'l',
-                    bbox: [x + third * 2.0, y, x + char_width, y + char_height],
-                    size: font_size,
-                });
-            }
-            '\u{FB05}' | '\u{FB06}' => {
-                // st ligature
-                let half = char_width * 0.5;
-                result.chars.push(CharInfo {
-                    c: 's',
-                    bbox: [x, y, x + half, y + char_height],
-                    size: font_size,
-                });
-                result.chars.push(CharInfo {
-                    c: 't',
-                    bbox: [x + half, y, x + char_width, y + char_height],
-                    size: font_size,
-                });
-            }
-            _ => {
-                result.chars.push(CharInfo {
-                    c,
-                    bbox: [x, y, x + char_width, y + char_height],
-                    size: font_size,
-                });
-            }
+        // Decode may yield multiple chars (e.g. TeX ligatures: byte 0x0C →
+        // "fi"). Push each with proportional width so the rest of the
+        // pipeline sees the same number of chars PyMuPDF does.
+        let n = decoded_chars.len();
+        let unit_w = char_width / n.max(1) as f64;
+        for (k, c) in decoded_chars.into_iter().enumerate() {
+            let cx0 = x + unit_w * k as f64;
+            result.chars.push(CharInfo {
+                c,
+                bbox: [cx0, y, cx0 + unit_w, y + char_height],
+                size: font_size,
+            });
         }
 
         // Advance text matrix

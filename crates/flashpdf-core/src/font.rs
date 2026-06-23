@@ -147,6 +147,61 @@ impl FontInfo {
         '\u{FFFD}'
     }
 
+    /// Decode a character code to one or more Unicode chars.
+    ///
+    /// ToUnicode CMaps can map a single byte to multiple Unicode code points
+    /// (e.g. TeX's CMR10 maps byte 0x0C to <00660069> = "fi"). This method
+    /// returns all of them so the caller can emit each char with proportional
+    /// width, matching PyMuPDF.
+    pub fn decode_chars(&self, code: &[u8]) -> Vec<char> {
+        // 1. Try ToUnicode CMap — may produce multiple UTF-16BE code units
+        if let Some(cmap) = &self.cmap {
+            if let Some(unicode) = cmap.lookup(code) {
+                let chars = unicode_bytes_to_chars(&unicode);
+                if !chars.is_empty() {
+                    return chars;
+                }
+            }
+        }
+        // All other fallback paths produce a single char
+        vec![self.decode_char_skip_cmap(code)]
+    }
+
+    /// Same as decode_char but skips the ToUnicode step (used by decode_chars
+    /// after the ToUnicode path already failed).
+    fn decode_char_skip_cmap(&self, code: &[u8]) -> char {
+        // 2. Try Encoding differences
+        if let Some(diffs) = &self.differences {
+            if code.len() == 1 {
+                if let Some(name) = diffs.get(&code[0]) {
+                    if let Some(c) = adobe_glyph_to_char(name) {
+                        return c;
+                    }
+                }
+            }
+        }
+        // 3. Try built-in standard font encodings
+        if code.len() == 1 {
+            if let Some(c) = builtin_font_decode(&self.base_font, code[0]) {
+                return c;
+            }
+        }
+        // 4. Raw byte
+        if code.len() == 1 {
+            let b = code[0];
+            if (0x20..0x7F).contains(&b) {
+                return b as char;
+            }
+            if b >= 0x80 {
+                return char::from(b);
+            }
+            if b < 0x20 {
+                return b as char;
+            }
+        }
+        '\u{FFFD}'
+    }
+
     /// Get the width of a character code in thousandths of a unit.
     pub fn char_width(&self, code: u32) -> f64 {
         if code >= self.first_char {
@@ -234,6 +289,58 @@ fn bytes_to_char(bytes: &[u8]) -> Option<char> {
         return char::from_u32(code);
     }
     None
+}
+
+/// Interpret ToUnicode output as a sequence of UTF-16BE code units, returning
+/// one char per scalar value (surrogate pairs decoded to a single char).
+///
+/// ToUnicode mappings can produce multiple code points for a single byte
+/// (e.g. <00660069> = "fi"). Each pair of bytes is one UTF-16BE unit; an
+/// odd-length byte sequence falls back to single-byte chars so we never
+/// silently drop data.
+fn unicode_bytes_to_chars(bytes: &[u8]) -> Vec<char> {
+    if bytes.is_empty() {
+        return Vec::new();
+    }
+    // Single byte: direct char (Latin-1-ish, used by some CMaps)
+    if bytes.len() == 1 {
+        return vec![bytes[0] as char];
+    }
+    // Even-length ≥ 2: treat as UTF-16BE code unit sequence
+    let mut chars = Vec::new();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        let unit = ((bytes[i] as u32) << 8) | (bytes[i + 1] as u32);
+        // High surrogate → try to consume the next unit as low surrogate
+        if (0xD800..0xDBFF).contains(&unit) {
+            if i + 3 < bytes.len() {
+                let low = ((bytes[i + 2] as u32) << 8) | (bytes[i + 3] as u32);
+                if (0xDC00..0xDFFF).contains(&low) {
+                    let scalar = 0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00);
+                    if let Some(c) = char::from_u32(scalar) {
+                        chars.push(c);
+                        i += 4;
+                        continue;
+                    }
+                }
+            }
+            // Malformed surrogate — emit replacement
+            chars.push('\u{FFFD}');
+            i += 2;
+            continue;
+        }
+        if let Some(c) = char::from_u32(unit) {
+            chars.push(c);
+        } else {
+            chars.push('\u{FFFD}');
+        }
+        i += 2;
+    }
+    // Trailing odd byte
+    if i < bytes.len() {
+        chars.push(bytes[i] as char);
+    }
+    chars
 }
 
 // ─── CMap parsing ───
