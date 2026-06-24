@@ -4,6 +4,22 @@
 
 Rust 核心 + Python 绑定，输出与 PyMuPDF 兼容的 `blocks` 和 `images` 结构。
 
+## 提取效果演示
+
+左侧是 fitz 渲染的原始 PDF 页面，右侧是 flashpdf `get_text("dict")` 的输出结构
+（每个色块是一个 block，按 line 展开，标注字号便于核对排版）。
+
+**👉 完整交互页：[docs/demo.html](docs/demo.html)**（自包含单文件，离线可看）
+
+![提取效果](docs/demo.png)
+
+上图样例：arxiv 双栏学术论文首页（标题 + 摘要 + 双栏正文）。可见 flashpdf：
+- 正确识别标题、作者行、abstract、双栏正文为独立 block
+- 字号信息（title 大字号、body 小字号）保留完整
+- 阅读顺序对齐 PDF 视觉顺序（v0.1.3 阅读顺序优化的成果）
+
+> 想用别的 PDF 重新生成？`python tests/gen_demo.py` 即可（脚本内可改 PDF 路径和页码）。
+
 ## 特性
 
 - **极致性能**：全链路零拷贝 (mmap)、SIMD 字节扫描 (`memchr`)、快速浮点解析 (`fast-float`)
@@ -193,6 +209,33 @@ with flashpdf.open("mixed.pdf") as doc:
 > **批量场景仍用 `extract()`**：`open()` 适合交互式/逐页访问，但若你要处理
 > 1000+ 个 PDF 做向量化，`extract_many(file_parallel=True, page_parallel=False)`
 > 仍是最高吞吐的入口。
+
+#### `open()` vs `extract()` 性能与精度对比
+
+两种 API 走同一个 Rust 核心，**字符级输出完全一致**（regression check 全部 OK）。
+v0.2.1 起 `PyDocument` / `PyPage` 通过 `Arc<PageResult>` 共享所有权——`doc[i]`
+只是一次原子引用计数 bump，**零深拷贝**，不再 clone blocks/images。
+
+| 文件 | API | Mean | p99 | 字符数 | char_sim vs fitz |
+|------|-----|-----:|----:|------:|-----------------:|
+| dbnet_plus | `flashpdf.extract()` MT (`include_images=False`) | 5.93 ms | 8.13 ms | 56315 | 92.89% |
+| dbnet_plus | `flashpdf.open(include_images=False)` | **4.87 ms** | 5.33 ms | 56315 | 92.89% |
+| dbnet_plus | `flashpdf.open()` (默认提取图像) | 11.36 ms | 13.15 ms | 56315 | 92.89% |
+| dbnet_plus | `fitz.open()` | 268.84 ms | 273.81 ms | 57191 | 100% |
+| arxiv_2604 | `flashpdf.extract()` MT (`include_images=False`) | 8.79 ms | 9.87 ms | 59112 | 92.77% |
+| arxiv_2604 | `flashpdf.open(include_images=False)` | **8.37 ms** | 8.91 ms | 59112 | 92.77% |
+| arxiv_2604 | `flashpdf.open()` (默认提取图像) | 9.18 ms | 9.88 ms | 59112 | 92.77% |
+| arxiv_2604 | `fitz.open()` | 144.35 ms | 153.84 ms | 60978 | 100% |
+
+- **精度**：`open()` 与 `extract()` 字符数完全相等（同一核心，无回归）；
+  char_sim 与 fitz 保持在 92-93%（fitz 多输出一些空白/控制字符，flashpdf 自动裁剪）。
+- **速度**：同等条件下（都不提图像），`open()` 反而比 `extract()` **快 5-18%**——
+  因为 `extract()` 在返回前要为所有页的所有 block 物化 Python dict，而 `open()` 用
+  Arc 共享，只在 `get_text()` 调用时才构造 dict。即便默认开图像，仍比 `fitz.open()`
+  快 **15-25x**。
+- **`include_images` 参数**：纯文本场景传 `False` 可省下大量图像解码时间
+  （dbnet_plus 这种多图文档能省一半）。
+- **何时用哪个**：交互式 / 逐页随机访问 → `open()`；批量向量化 → `extract_many()`。
 
 ## API 参考
 
