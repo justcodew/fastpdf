@@ -10,7 +10,9 @@ Rust 核心 + Python 绑定，输出与 PyMuPDF 兼容的 `blocks` 和 `images` 
 - **不牺牲信息**：完整的文本提取链路，包括 CMap、Type0 复合字体、Form XObject 递归
 - **并行处理**：rayon 页级并行 + 文件级并行 + 异步预读
 - **健壮容错**：xref 损坏时自动 memchr 全文扫描恢复
-- **PyMuPDF 兼容**：输出结构与 PyMuPDF 完全一致，零迁移成本
+- **fitz 兼容 API**（v0.2.0+）：`flashpdf.open(path)` → `Document` → `doc[i]` →
+  `page.get_text("dict"|"text"|"blocks")`，与 PyMuPDF 的常用接口一一对应；
+  原 `extract()` / `extract_many()` 保留用于批量场景
 
 ## 适用范围（务必先读）
 
@@ -125,6 +127,72 @@ for page in &result.pages {
     }
 }
 ```
+
+### fitz 风格 API（v0.2.0+）
+
+`flashpdf.open()` 提供与 PyMuPDF 一一对应的 Document / Page 接口。**open() 时
+一次性并行提取所有页**，后续 `doc[i]` / `get_text()` 纯内存查询，零延迟。
+
+```python
+import flashpdf
+
+with flashpdf.open("paper.pdf") as doc:
+    print(len(doc))                  # 页数
+    print(doc.page_count)            # 同上，fitz 风格
+
+    page = doc[0]                    # 首页（支持 doc[-1] 负索引）
+
+    # 三种 get_text 模式，与 fitz.Page.get_text 对齐
+    d  = page.get_text("dict")       # 结构化 {blocks:[...]}，文本块 type=0，图像块 type=1 内联
+    t  = page.get_text("text")       # 纯文本拼接
+    bs = page.get_text("blocks")     # fitz "blocks" 模式 (x0,y0,x1,y1,text,no,type)
+
+    # 其他属性
+    print(page.is_scanned)           # 该页是否扫描页（v0.1.4 引入的启发式）
+    print(page.rect)                 # MediaBox [x0,y0,x1,y1]
+    print(page.number)               # 0-based 页码
+
+    imgs = page.get_images()         # 该页的图像列表（每个含 bbox/width/height/ext/image bytes）
+
+# 按页处理混合文档
+with flashpdf.open("mixed.pdf") as doc:
+    for i in range(len(doc)):
+        page = doc[i]
+        if page.is_scanned:
+            # 扫描页：拿图像字节喂给 OCR
+            for img in page.get_images():
+                your_ocr(img["image"])
+        else:
+            # 电子页：直接用文本
+            print(page.get_text("text"))
+```
+
+**与 fitz 的对照**：
+
+| fitz API | flashpdf API | 状态 |
+|----------|--------------|------|
+| `fitz.open(path)` | `flashpdf.open(path)` | ✅ |
+| `len(doc)` / `doc.page_count` | 同左 | ✅ |
+| `doc[i]` / `doc[-1]` | 同左 | ✅ |
+| `page.get_text("dict")` | 同左 | ✅（span 含 `flags=0` stub，下表说明） |
+| `page.get_text("text")` | 同左 | ✅ |
+| `page.get_text("blocks")` | 同左 | ✅ |
+| `page.rect` / `page.number` | 同左 | ✅ |
+| `page.get_images()` | 同左 | ✅ |
+| `page.get_pixmap()` | ❌ | 不支持渲染（设计目标） |
+| `page.add_annotation()` 等 | ❌ | 不支持编辑 |
+
+**span 字段对比**：
+
+| 字段 | fitz | flashpdf | 备注 |
+|------|------|----------|------|
+| `bbox`, `text`, `font`, `size`, `color` | ✅ | ✅ | 完全对齐 |
+| `flags` | ✅（italic/bold/serif bitmask） | `0`（stub） | v0.2.0 不带格式探测，未来增强 |
+| `ascender`, `descender`, `origin`, `alpha`, `bidi`, `char_flags` | ✅ | ❌ | fitz 扩展字段，flashpdf 不输出 |
+
+> **批量场景仍用 `extract()`**：`open()` 适合交互式/逐页访问，但若你要处理
+> 1000+ 个 PDF 做向量化，`extract_many(file_parallel=True, page_parallel=False)`
+> 仍是最高吞吐的入口。
 
 ## API 参考
 

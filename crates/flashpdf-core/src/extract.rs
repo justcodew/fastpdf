@@ -43,6 +43,9 @@ pub struct PageResult {
     /// require OCR to recover text; flashpdf returns the raw image bytes
     /// in `images` for the caller to feed into their OCR engine of choice.
     pub is_scanned: bool,
+    /// Page rectangle [x0, y0, x1, y1] from /MediaBox (or union-bbox fallback).
+    /// Exposed as `page.rect` in the fitz-style API.
+    pub rect: [f64; 4],
 }
 
 /// Thresholds for the scan-detection heuristic.
@@ -128,6 +131,7 @@ fn extract_page_batch(
                     blocks: vec![],
                     images: vec![],
                     is_scanned: false,
+                    rect: [0.0, 0.0, 612.0, 792.0],
                 })
             })
             .collect()
@@ -139,6 +143,7 @@ fn extract_page_batch(
                     blocks: vec![],
                     images: vec![],
                     is_scanned: false,
+                    rect: [0.0, 0.0, 612.0, 792.0],
                 })
             })
             .collect()
@@ -311,6 +316,7 @@ fn extract_single_page(
         blocks,
         images,
         is_scanned,
+        rect,
     })
 }
 
@@ -523,5 +529,50 @@ mod tests {
     fn test_detect_scanned_empty_page() {
         // No text, no images => not scanned (blank page, not scanned)
         assert!(!detect_scanned(&[], &[], &letter_rect()));
+    }
+
+    #[test]
+    fn test_page_rect_prefers_mediabox() {
+        // Construct a synthetic page object with a /MediaBox and verify
+        // page_rect surfaces it.
+        let page = PdfObject::Dict(vec![
+            (
+                &b"MediaBox"[..],
+                PdfObject::Array(vec![
+                    PdfObject::Integer(0),
+                    PdfObject::Integer(0),
+                    PdfObject::Real(595.0),
+                    PdfObject::Real(842.0),
+                ]),
+            ),
+            (&b"Type"[..], PdfObject::Name(b"Page")),
+        ]);
+        let rect = page_rect(&page, &[]);
+        assert!((rect[0] - 0.0).abs() < 1e-6);
+        assert!((rect[1] - 0.0).abs() < 1e-6);
+        assert!((rect[2] - 595.0).abs() < 1e-6);
+        assert!((rect[3] - 842.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_page_rect_falls_back_to_blocks_bbox() {
+        // No MediaBox: fallback is union bbox of all blocks.
+        let blocks = vec![
+            TextBlock {
+                bbox: [10.0, 20.0, 100.0, 50.0],
+                lines: vec![],
+            },
+            TextBlock {
+                bbox: [5.0, 60.0, 80.0, 90.0],
+                lines: vec![],
+            },
+        ];
+        let empty_page: PdfObject<'_> = PdfObject::Dict(vec![]);
+        let rect = page_rect(&empty_page, &blocks);
+        // Union: x0=5, y0=20, x1=100, y1=90
+        assert!((rect[0] - 5.0).abs() < 1e-6);
+        assert!((rect[1] - 20.0).abs() < 1e-6);
+        assert!((rect[2] - 100.0).abs() < 1e-6);
+        assert!((rect[3] - 90.0).abs() < 1e-6);
     }
 }

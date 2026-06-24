@@ -7,8 +7,22 @@ fn flashpdf(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract, m)?)?;
     m.add_function(wrap_pyfunction!(extract_many, m)?)?;
     m.add_function(wrap_pyfunction!(extract_links, m)?)?;
+    m.add_function(wrap_pyfunction!(open, m)?)?;
+    m.add_class::<PyDocument>()?;
+    m.add_class::<PyPage>()?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
+}
+
+/// fitz-style entry point: open a PDF and eagerly extract all pages.
+///
+/// Returns a `Document` whose pages can be indexed (`doc[i]`) and queried
+/// via `page.get_text("dict"|"text"|"blocks")`, `page.get_images()`,
+/// `page.is_scanned`, `page.rect`. Mirrors `fitz.open(path)` for the
+/// text/image-extraction subset of the API.
+#[pyfunction]
+fn open(path: &str) -> PyResult<PyDocument> {
+    PyDocument::open(path)
 }
 
 /// Extract text blocks and images from a single PDF file.
@@ -187,4 +201,285 @@ fn render_extract_result<'py>(
         result_list.append(pages_list)?;
     }
     Ok(result_list)
+}
+
+// ============================================================================
+// fitz-style API: Document / Page
+// ============================================================================
+
+/// A parsed PDF document with all pages eagerly extracted on open.
+///
+/// Mirrors `fitz.Document` for the text/image extraction subset of the API.
+/// Use `len(doc)` for page count, `doc[i]` to get a `Page`, and
+/// `page.get_text("dict")` for fitz-compatible dict output.
+#[pyclass(name = "Document")]
+pub struct PyDocument {
+    pages: Vec<flashpdf_core::PageResult>,
+}
+
+#[pymethods]
+impl PyDocument {
+    #[new]
+    fn new(path: &str) -> PyResult<Self> {
+        Self::open(path)
+    }
+
+    /// Number of pages. `len(doc)`.
+    fn __len__(&self) -> usize {
+        self.pages.len()
+    }
+
+    /// Index a page. Supports negative indices (`doc[-1]`).
+    fn __getitem__(&self, py: Python<'_>, idx: isize) -> PyResult<Py<PyPage>> {
+        let i = if idx < 0 {
+            self.pages.len() as isize + idx
+        } else {
+            idx
+        };
+        if i < 0 || i as usize >= self.pages.len() {
+            return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                "page index {idx} out of range 0..{}",
+                self.pages.len()
+            )));
+        }
+        let page = PyPage::from_result(i as usize, &self.pages[i as usize]);
+        Py::new(py, page)
+    }
+
+    /// Page count (fitz-compatible property name).
+    #[getter]
+    fn page_count(&self) -> usize {
+        self.pages.len()
+    }
+
+    /// No-op: the underlying mmap has already been released by the time
+    /// `open()` returns. Provided for fitz API parity (`doc.close()`).
+    fn close(&self) {}
+
+    fn __enter__(slf: Bound<'_, Self>) -> Bound<'_, Self> {
+        slf
+    }
+
+    fn __exit__<'py>(
+        &self,
+        _exc_type: &Bound<'py, PyAny>,
+        _exc_val: &Bound<'py, PyAny>,
+        _tb: &Bound<'py, PyAny>,
+    ) -> PyResult<()> {
+        Ok(())
+    }
+}
+
+impl PyDocument {
+    fn open(path: &str) -> PyResult<Self> {
+        let opts = flashpdf_core::ExtractOptions::default();
+        let result = flashpdf_core::extract(path, &opts)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        Ok(Self {
+            pages: result.pages,
+        })
+    }
+}
+
+/// A single PDF page view. Returned by `doc[i]`.
+///
+/// `get_text("dict")` returns a fitz-compatible dict with text blocks
+/// (`type=0`) and image blocks (`type=1`) in one `blocks` list.
+/// `get_text("text")` returns plain text. `get_text("blocks")` returns
+/// the simplified `(bbox, text, block_no, block_type)` tuple list.
+#[pyclass(name = "Page")]
+pub struct PyPage {
+    page_idx: usize,
+    blocks: Vec<flashpdf_core::TextBlock>,
+    images: Vec<flashpdf_core::ExtractedImage>,
+    is_scanned: bool,
+    rect: [f64; 4],
+}
+
+impl PyPage {
+    fn from_result(idx: usize, page: &flashpdf_core::PageResult) -> Self {
+        Self {
+            page_idx: idx,
+            blocks: page.blocks.clone(),
+            images: page.images.clone(),
+            is_scanned: page.is_scanned,
+            rect: page.rect,
+        }
+    }
+}
+
+#[pymethods]
+impl PyPage {
+    /// Extract text in fitz-compatible modes: "dict" (default), "text", "blocks".
+    #[pyo3(signature = (mode="dict"))]
+    fn get_text<'py>(&self, py: Python<'py>, mode: &str) -> PyResult<Bound<'py, PyAny>> {
+        match mode {
+            "dict" => self.text_dict(py).map(|b| b.into_any()),
+            "text" => self.text_plain(py).map(|b| b.into_any()),
+            "blocks" => self.text_blocks(py).map(|b| b.into_any()),
+            other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "unknown get_text mode: {other:?} (expected 'dict', 'text', or 'blocks')"
+            ))),
+        }
+    }
+
+    /// fitz-compatible image list. Each image is a dict with bbox/width/height/
+    /// bpc/colorspace/xref/ext/image keys.
+    fn get_images<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
+        let list = PyList::empty(py);
+        for img in &self.images {
+            list.append(self.image_to_dict(py, img)?)?;
+        }
+        Ok(list)
+    }
+
+    #[getter]
+    fn is_scanned(&self) -> bool {
+        self.is_scanned
+    }
+
+    /// fitz uses `number` for the 0-based page index.
+    #[getter]
+    fn number(&self) -> usize {
+        self.page_idx
+    }
+
+    #[getter]
+    fn rect(&self) -> [f64; 4] {
+        self.rect
+    }
+
+    /// Alias for `rect`, for PyMuPDF-style access.
+    #[getter]
+    fn bbox(&self) -> [f64; 4] {
+        self.rect
+    }
+}
+
+impl PyPage {
+    fn text_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let blocks_list = PyList::empty(py);
+
+        // Text blocks (type=0)
+        for block in &self.blocks {
+            let block_dict = PyDict::new(py);
+            block_dict.set_item("type", 0)?;
+            block_dict.set_item("bbox", block.bbox.to_vec())?;
+            block_dict.set_item("number", self.page_idx)?;
+
+            let lines_list = PyList::empty(py);
+            for line in &block.lines {
+                let line_dict = PyDict::new(py);
+                line_dict.set_item("bbox", line.bbox.to_vec())?;
+
+                let spans_list = PyList::empty(py);
+                for span in &line.spans {
+                    let span_dict = PyDict::new(py);
+                    span_dict.set_item("bbox", span.bbox.to_vec())?;
+                    span_dict.set_item("text", &span.text)?;
+                    span_dict.set_item("font", &span.font)?;
+                    span_dict.set_item("size", span.size)?;
+                    span_dict.set_item("color", span.color)?;
+                    // fitz flag bits (italic/bold/serif/...). Stub: 0 for now.
+                    span_dict.set_item("flags", 0)?;
+                    spans_list.append(span_dict)?;
+                }
+                line_dict.set_item("spans", spans_list)?;
+                lines_list.append(line_dict)?;
+            }
+            block_dict.set_item("lines", lines_list)?;
+            blocks_list.append(block_dict)?;
+        }
+
+        // Image blocks (type=1), inline like fitz
+        for img in &self.images {
+            let img_dict = self.image_to_dict(py, img)?;
+            // fitz image blocks include type=1 at the same level as text blocks
+            img_dict.set_item("type", 1)?;
+            blocks_list.append(img_dict)?;
+        }
+
+        let dict = PyDict::new(py);
+        dict.set_item("blocks", blocks_list)?;
+        Ok(dict)
+    }
+
+    fn text_plain<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyString>> {
+        let mut out = String::new();
+        for block in &self.blocks {
+            for line in &block.lines {
+                for span in &line.spans {
+                    out.push_str(&span.text);
+                }
+                out.push('\n');
+            }
+            out.push('\n');
+        }
+        Ok(pyo3::types::PyString::new(py, &out))
+    }
+
+    fn text_blocks<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
+        // fitz "blocks" mode: list of (x0, y0, x1, y1, text, block_no, block_type)
+        let list = PyList::empty(py);
+        for (i, block) in self.blocks.iter().enumerate() {
+            let text: String = block
+                .lines
+                .iter()
+                .flat_map(|l| l.spans.iter().map(|s| s.text.as_str()))
+                .collect::<Vec<_>>()
+                .join("");
+            let tuple = (
+                block.bbox[0],
+                block.bbox[1],
+                block.bbox[2],
+                block.bbox[3],
+                text,
+                i,
+                0_i32, // block_type: 0 = text
+            );
+            list.append(tuple)?;
+        }
+        for (i, img) in self.images.iter().enumerate() {
+            let tuple = (
+                img.bbox[0],
+                img.bbox[1],
+                img.bbox[2],
+                img.bbox[3],
+                "",
+                self.blocks.len() + i,
+                1_i32, // block_type: 1 = image
+            );
+            list.append(tuple)?;
+        }
+        Ok(list)
+    }
+
+    fn image_to_dict<'py>(
+        &self,
+        py: Python<'py>,
+        img: &flashpdf_core::ExtractedImage,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let img_dict = PyDict::new(py);
+        img_dict.set_item("bbox", img.bbox.to_vec())?;
+        img_dict.set_item("width", img.width)?;
+        img_dict.set_item("height", img.height)?;
+        img_dict.set_item("bpc", img.bpc)?;
+        img_dict.set_item("colorspace", &img.colorspace)?;
+        img_dict.set_item("xref", img.xref)?;
+        img_dict.set_item("ext", &img.ext)?;
+        match &img.data {
+            Some(flashpdf_core::ImageData::Raw(data)) => {
+                img_dict.set_item("image", PyBytes::new(py, data))?;
+            }
+            Some(flashpdf_core::ImageData::Png(data)) => {
+                img_dict.set_item("image", PyBytes::new(py, data))?;
+            }
+            // MmapSlice is unreachable in practice (resolve_images only
+            // produces Raw). Match existing extract() behavior: emit None.
+            _ => {
+                img_dict.set_item("image", py.None())?;
+            }
+        }
+        Ok(img_dict)
+    }
 }

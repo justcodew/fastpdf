@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.2.0] - 2026-06-24
+
+### Added
+
+- **fitz 风格 API**：新增 `flashpdf.open()` 入口 + `Document` / `Page` 类，与
+  PyMuPDF 的常用接口一一对应。解决了 v0.1.x 两个 API 痛点：
+  1. 之前 `extract()` 把所有页的 blocks/images 混在扁平列表里，按页处理要
+     自己 `groupby(page)`；现在 `doc[i].get_text("dict")` 天然返回 per-page
+     数据。
+  2. 之前没有 `open()` 入口，与 fitz 用户 muscle memory 不兼容。
+
+  ```python
+  import flashpdf
+  with flashpdf.open("paper.pdf") as doc:
+      page = doc[0]                       # 支持 doc[-1] 负索引
+      d = page.get_text("dict")           # fitz 兼容 dict（文本块 type=0、图像块 type=1 内联）
+      t = page.get_text("text")           # 纯文本
+      bs = page.get_text("blocks")        # fitz "blocks" 元组列表
+      imgs = page.get_images()            # 该页图像
+      print(page.is_scanned, page.rect, page.number)
+  ```
+
+  - **open() 策略**：一次性并行提取所有页（eager），后续访问纯内存，零延迟
+  - **向后兼容**：`extract()` / `extract_many()` 完全不变，仍用于批量场景
+  - **fitz 对齐细节**：span 输出 `bbox/text/font/size/color/flags` 六个核心字段；
+    `flags` 暂为 `0` stub（不带 italic/bold 格式探测），不影响字段访问；
+    `ascender/descender/origin` 等 fitz 扩展字段不输出（已在 README 标注）
+  - **type=1 image block**：fitz 把图像块和文本块混在同一 `blocks` 数组里，
+    flashpdf v0.2.0 同样如此（之前 extract() 是分离的两个 list）
+
+### Changed
+
+- `PageResult` 新增 `rect: [f64; 4]` 字段（从 /MediaBox 解析），供 `Page.rect`
+  属性暴露。所有 `extract_page_batch` 兜底返回也填充默认 letter 尺寸。
+
+### Tests
+
+- 新增 2 个单元测试覆盖 `page_rect`：MediaBox 优先 + blocks union 兜底
+- 总测试数 39 个全部通过
+
 ## [0.1.4] - 2026-06-24
 
 ### Added
