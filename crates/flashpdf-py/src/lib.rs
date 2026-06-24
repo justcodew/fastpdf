@@ -1,5 +1,6 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
+use std::sync::Arc;
 
 /// FlashPDF — high-performance PDF text and image extraction.
 #[pymodule]
@@ -20,9 +21,14 @@ fn flashpdf(m: &Bound<'_, PyModule>) -> PyResult<()> {
 /// via `page.get_text("dict"|"text"|"blocks")`, `page.get_images()`,
 /// `page.is_scanned`, `page.rect`. Mirrors `fitz.open(path)` for the
 /// text/image-extraction subset of the API.
+///
+/// `include_images=False` skips image extraction (faster when you only need
+/// text). Pages are shared with `Arc` internally, so `doc[i]` is O(1) —
+/// no per-access clone of the page's blocks/images.
 #[pyfunction]
-fn open(path: &str) -> PyResult<PyDocument> {
-    PyDocument::open(path)
+#[pyo3(signature = (path, include_images=true))]
+fn open(path: &str, include_images: bool) -> PyResult<PyDocument> {
+    PyDocument::open(path, include_images)
 }
 
 /// Extract text blocks and images from a single PDF file.
@@ -214,14 +220,15 @@ fn render_extract_result<'py>(
 /// `page.get_text("dict")` for fitz-compatible dict output.
 #[pyclass(name = "Document")]
 pub struct PyDocument {
-    pages: Vec<flashpdf_core::PageResult>,
+    pages: Vec<Arc<flashpdf_core::PageResult>>,
 }
 
 #[pymethods]
 impl PyDocument {
     #[new]
-    fn new(path: &str) -> PyResult<Self> {
-        Self::open(path)
+    #[pyo3(signature = (path, include_images=true))]
+    fn new(path: &str, include_images: bool) -> PyResult<Self> {
+        Self::open(path, include_images)
     }
 
     /// Number of pages. `len(doc)`.
@@ -230,6 +237,8 @@ impl PyDocument {
     }
 
     /// Index a page. Supports negative indices (`doc[-1]`).
+    ///
+    /// O(1): bumps an `Arc` refcount, does NOT clone the page's blocks/images.
     fn __getitem__(&self, py: Python<'_>, idx: isize) -> PyResult<Py<PyPage>> {
         let i = if idx < 0 {
             self.pages.len() as isize + idx
@@ -242,7 +251,12 @@ impl PyDocument {
                 self.pages.len()
             )));
         }
-        let page = PyPage::from_result(i as usize, &self.pages[i as usize]);
+        // Arc::clone is a single atomic refcount bump — no deep copy of
+        // blocks/images vectors. PyPage shares ownership of the PageResult.
+        let page = PyPage {
+            page_idx: i as usize,
+            page: Arc::clone(&self.pages[i as usize]),
+        };
         Py::new(py, page)
     }
 
@@ -271,13 +285,18 @@ impl PyDocument {
 }
 
 impl PyDocument {
-    fn open(path: &str) -> PyResult<Self> {
-        let opts = flashpdf_core::ExtractOptions::default();
+    fn open(path: &str, include_images: bool) -> PyResult<Self> {
+        let opts = flashpdf_core::ExtractOptions {
+            page_parallel: true,
+            file_parallel: false,
+            include_images,
+            gpu: false,
+            batch_size: 50,
+        };
         let result = flashpdf_core::extract(path, &opts)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        Ok(Self {
-            pages: result.pages,
-        })
+        let pages = result.pages.into_iter().map(Arc::new).collect();
+        Ok(Self { pages })
     }
 }
 
@@ -290,22 +309,9 @@ impl PyDocument {
 #[pyclass(name = "Page")]
 pub struct PyPage {
     page_idx: usize,
-    blocks: Vec<flashpdf_core::TextBlock>,
-    images: Vec<flashpdf_core::ExtractedImage>,
-    is_scanned: bool,
-    rect: [f64; 4],
-}
-
-impl PyPage {
-    fn from_result(idx: usize, page: &flashpdf_core::PageResult) -> Self {
-        Self {
-            page_idx: idx,
-            blocks: page.blocks.clone(),
-            images: page.images.clone(),
-            is_scanned: page.is_scanned,
-            rect: page.rect,
-        }
-    }
+    /// Arc-shared with the parent Document. Cloning a Page (via `doc[i]`)
+    /// is a single atomic refcount bump — no deep copy of blocks/images.
+    page: Arc<flashpdf_core::PageResult>,
 }
 
 #[pymethods]
@@ -327,7 +333,7 @@ impl PyPage {
     /// bpc/colorspace/xref/ext/image keys.
     fn get_images<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
         let list = PyList::empty(py);
-        for img in &self.images {
+        for img in &self.page.images {
             list.append(self.image_to_dict(py, img)?)?;
         }
         Ok(list)
@@ -335,7 +341,7 @@ impl PyPage {
 
     #[getter]
     fn is_scanned(&self) -> bool {
-        self.is_scanned
+        self.page.is_scanned
     }
 
     /// fitz uses `number` for the 0-based page index.
@@ -346,13 +352,13 @@ impl PyPage {
 
     #[getter]
     fn rect(&self) -> [f64; 4] {
-        self.rect
+        self.page.rect
     }
 
     /// Alias for `rect`, for PyMuPDF-style access.
     #[getter]
     fn bbox(&self) -> [f64; 4] {
-        self.rect
+        self.page.rect
     }
 }
 
@@ -361,7 +367,7 @@ impl PyPage {
         let blocks_list = PyList::empty(py);
 
         // Text blocks (type=0)
-        for block in &self.blocks {
+        for block in &self.page.blocks {
             let block_dict = PyDict::new(py);
             block_dict.set_item("type", 0)?;
             block_dict.set_item("bbox", block.bbox.to_vec())?;
@@ -392,7 +398,7 @@ impl PyPage {
         }
 
         // Image blocks (type=1), inline like fitz
-        for img in &self.images {
+        for img in &self.page.images {
             let img_dict = self.image_to_dict(py, img)?;
             // fitz image blocks include type=1 at the same level as text blocks
             img_dict.set_item("type", 1)?;
@@ -406,7 +412,7 @@ impl PyPage {
 
     fn text_plain<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyString>> {
         let mut out = String::new();
-        for block in &self.blocks {
+        for block in &self.page.blocks {
             for line in &block.lines {
                 for span in &line.spans {
                     out.push_str(&span.text);
@@ -421,7 +427,7 @@ impl PyPage {
     fn text_blocks<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
         // fitz "blocks" mode: list of (x0, y0, x1, y1, text, block_no, block_type)
         let list = PyList::empty(py);
-        for (i, block) in self.blocks.iter().enumerate() {
+        for (i, block) in self.page.blocks.iter().enumerate() {
             let text: String = block
                 .lines
                 .iter()
@@ -439,14 +445,14 @@ impl PyPage {
             );
             list.append(tuple)?;
         }
-        for (i, img) in self.images.iter().enumerate() {
+        for (i, img) in self.page.images.iter().enumerate() {
             let tuple = (
                 img.bbox[0],
                 img.bbox[1],
                 img.bbox[2],
                 img.bbox[3],
                 "",
-                self.blocks.len() + i,
+                self.page.blocks.len() + i,
                 1_i32, // block_type: 1 = image
             );
             list.append(tuple)?;
