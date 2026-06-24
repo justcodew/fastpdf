@@ -38,6 +38,45 @@ impl Default for ExtractOptions {
 pub struct PageResult {
     pub blocks: Vec<crate::parser::TextBlock>,
     pub images: Vec<ExtractedImage>,
+    /// True if this page looks like a scanned page: very little extractable
+    /// text AND at least one image covering most of the page. Such pages
+    /// require OCR to recover text; flashpdf returns the raw image bytes
+    /// in `images` for the caller to feed into their OCR engine of choice.
+    pub is_scanned: bool,
+}
+
+/// Thresholds for the scan-detection heuristic.
+const SCAN_MIN_TEXT_CHARS: usize = 50;
+const SCAN_MIN_IMAGE_AREA_FRAC: f64 = 0.7;
+
+/// Decide whether a page is scanned based on text char count and the
+/// largest image's bbox coverage of the page rect.
+fn detect_scanned(
+    blocks: &[TextBlock],
+    images: &[crate::parser::content_stream::ImageRef],
+    page_rect: &[f64; 4],
+) -> bool {
+    let char_count: usize = blocks
+        .iter()
+        .flat_map(|b| b.lines.iter())
+        .flat_map(|l| l.spans.iter())
+        .map(|s| s.text.chars().count())
+        .sum();
+    if char_count >= SCAN_MIN_TEXT_CHARS {
+        return false;
+    }
+    let page_w = (page_rect[2] - page_rect[0]).max(1.0);
+    let page_h = (page_rect[3] - page_rect[1]).max(1.0);
+    let page_area = page_w * page_h;
+    let max_img_area = images
+        .iter()
+        .map(|img| {
+            let w = (img.bbox[2] - img.bbox[0]).max(0.0);
+            let h = (img.bbox[3] - img.bbox[1]).max(0.0);
+            w * h
+        })
+        .fold(0.0_f64, f64::max);
+    max_img_area / page_area >= SCAN_MIN_IMAGE_AREA_FRAC
 }
 
 /// Result of extracting a document.
@@ -88,6 +127,7 @@ fn extract_page_batch(
                 extract_single_page(doc, *r, mmap_data, options).unwrap_or_else(|_| PageResult {
                     blocks: vec![],
                     images: vec![],
+                    is_scanned: false,
                 })
             })
             .collect()
@@ -98,6 +138,7 @@ fn extract_page_batch(
                 extract_single_page(doc, *r, mmap_data, options).unwrap_or_else(|_| PageResult {
                     blocks: vec![],
                     images: vec![],
+                    is_scanned: false,
                 })
             })
             .collect()
@@ -250,6 +291,9 @@ fn extract_single_page(
     let rect = page_rect(&page, &blocks);
     let blocks = crate::layout::reading_order_sort(blocks, rect);
 
+    // Detect scanned page (heuristic: little text + large image covering the page)
+    let is_scanned = detect_scanned(&blocks, &scan_result.images, &rect);
+
     // Resolve images if requested
     let images = if options.include_images && !scan_result.images.is_empty() {
         if let Some(ref resources) = resources {
@@ -263,7 +307,11 @@ fn extract_single_page(
         vec![]
     };
 
-    Ok(PageResult { blocks, images })
+    Ok(PageResult {
+        blocks,
+        images,
+        is_scanned,
+    })
 }
 
 /// Get the concatenated content stream data for a page.
@@ -393,4 +441,87 @@ fn build_xobject_map<'a>(
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::content_stream::{ImageRef, TextBlock, TextLine, TextSpan};
+
+    fn make_block(text: &str) -> TextBlock {
+        TextBlock {
+            bbox: [0.0, 0.0, 100.0, 20.0],
+            lines: vec![TextLine {
+                bbox: [0.0, 0.0, 100.0, 20.0],
+                spans: vec![TextSpan {
+                    text: text.to_string(),
+                    font: "Helvetica".to_string(),
+                    size: 12.0,
+                    color: 0,
+                    bbox: [0.0, 0.0, 100.0, 20.0],
+                    chars: vec![],
+                }],
+            }],
+        }
+    }
+
+    fn make_full_page_image() -> ImageRef {
+        // Covers most of a 612x792 letter page
+        ImageRef {
+            name: "Im0".to_string(),
+            bbox: [0.0, 0.0, 612.0, 792.0],
+            obj_ref: None,
+        }
+    }
+
+    fn letter_rect() -> [f64; 4] {
+        [0.0, 0.0, 612.0, 792.0]
+    }
+
+    #[test]
+    fn test_detect_scanned_full_page_image_no_text() {
+        // No text blocks + one full-page image => scanned
+        assert!(detect_scanned(
+            &[],
+            &[make_full_page_image()],
+            &letter_rect()
+        ));
+    }
+
+    #[test]
+    fn test_detect_scanned_real_text_page() {
+        // Plenty of text + no image => not scanned
+        let blocks = vec![make_block(
+            "This is a real text page with enough characters to pass the heuristic threshold.",
+        )];
+        assert!(!detect_scanned(&blocks, &[], &letter_rect()));
+    }
+
+    #[test]
+    fn test_detect_scanned_below_text_threshold_with_image() {
+        // Tiny amount of text (under 50 chars) + full-page image => scanned
+        let blocks = vec![make_block("hi")];
+        assert!(detect_scanned(
+            &blocks,
+            &[make_full_page_image()],
+            &letter_rect()
+        ));
+    }
+
+    #[test]
+    fn test_detect_scanned_small_image_not_scanned() {
+        // No text + small image (logo, not page-filling) => not scanned
+        let small_image = ImageRef {
+            name: "logo".to_string(),
+            bbox: [0.0, 0.0, 50.0, 50.0],
+            obj_ref: None,
+        };
+        assert!(!detect_scanned(&[], &[small_image], &letter_rect()));
+    }
+
+    #[test]
+    fn test_detect_scanned_empty_page() {
+        // No text, no images => not scanned (blank page, not scanned)
+        assert!(!detect_scanned(&[], &[], &letter_rect()));
+    }
 }

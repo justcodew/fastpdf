@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.4] - 2026-06-24
+
+### Added
+
+- **扫描页检测（`is_scanned`）**：新增启发式判断每页是否为扫描页——
+  页内可提取文本字符 < 50 **且** 存在覆盖页面 ≥ 70% 的位图。flashpdf
+  不做 OCR，但识别扫描页后可以把原始图像字节交给外部 OCR 引擎。
+
+  - `PageResult.is_scanned: bool`（Rust）
+  - `extract(..., with_page_info=True)` 返回 3-tuple `(blocks, images, pages)`，
+    其中 `pages = [{"page": 0, "is_scanned": False}, ...]`
+  - 默认 `with_page_info=False`，**完全向后兼容**现有 `(blocks, images)` 解包
+  - 对混合文档（部分电子 + 部分扫描）按页分别判断
+  - 新增 5 个单元测试覆盖：纯扫描页、纯文本页、低字符数+全图、小图（logo）、空页
+
 ## [0.1.3] - 2026-06-23
 
 本次发布聚焦**解码准确性**与**行内空格还原**，char_sim 从 v0.1.2 的 21%

@@ -12,8 +12,13 @@ fn flashpdf(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 /// Extract text blocks and images from a single PDF file.
+///
+/// Returns `(blocks, images)` by default. Pass `with_page_info=True` to get
+/// a third element `pages` — a list of `{page, is_scanned}` dicts, useful for
+/// detecting scanned pages that need OCR.
 #[pyfunction]
-#[pyo3(signature = (path, page_parallel=true, include_images=true, gpu=false, batch_size=50))]
+#[pyo3(signature = (path, page_parallel=true, include_images=true, gpu=false, batch_size=50, with_page_info=false))]
+#[allow(clippy::too_many_arguments)]
 fn extract<'py>(
     py: Python<'py>,
     path: &str,
@@ -21,6 +26,7 @@ fn extract<'py>(
     include_images: bool,
     gpu: bool,
     batch_size: usize,
+    with_page_info: bool,
 ) -> PyResult<Bound<'py, PyList>> {
     let options = flashpdf_core::ExtractOptions {
         page_parallel,
@@ -33,12 +39,13 @@ fn extract<'py>(
     let result = flashpdf_core::extract(path, &options)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
-    render_extract_result(py, &result)
+    render_extract_result(py, &result, with_page_info)
 }
 
 /// Batch extract from multiple PDF files with file-level parallelism.
 #[pyfunction]
-#[pyo3(signature = (paths, file_parallel=true, page_parallel=false, include_images=false, gpu=false, batch_size=50))]
+#[pyo3(signature = (paths, file_parallel=true, page_parallel=false, include_images=false, gpu=false, batch_size=50, with_page_info=false))]
+#[allow(clippy::too_many_arguments)]
 fn extract_many<'py>(
     py: Python<'py>,
     paths: Vec<String>,
@@ -47,6 +54,7 @@ fn extract_many<'py>(
     include_images: bool,
     gpu: bool,
     batch_size: usize,
+    with_page_info: bool,
 ) -> PyResult<Bound<'py, PyList>> {
     let options = flashpdf_core::ExtractOptions {
         page_parallel,
@@ -66,7 +74,7 @@ fn extract_many<'py>(
 
         match result {
             Ok(extract_result) => {
-                let page_result = render_extract_result(py, &extract_result)?;
+                let page_result = render_extract_result(py, &extract_result, with_page_info)?;
                 item.append(page_result)?;
             }
             Err(_) => {
@@ -100,13 +108,16 @@ fn extract_links<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyList
     Ok(output)
 }
 
-/// Render an ExtractResult into a Python list of [blocks, images].
+/// Render an ExtractResult into a Python list of [blocks, images] or
+/// [blocks, images, pages] when `with_page_info` is set.
 fn render_extract_result<'py>(
     py: Python<'py>,
     result: &flashpdf_core::ExtractResult,
+    with_page_info: bool,
 ) -> PyResult<Bound<'py, PyList>> {
     let blocks_list = PyList::empty(py);
     let images_list = PyList::empty(py);
+    let pages_list = PyList::empty(py);
 
     for (page_idx, page) in result.pages.iter().enumerate() {
         for block in &page.blocks {
@@ -160,10 +171,20 @@ fn render_extract_result<'py>(
             }
             images_list.append(img_dict)?;
         }
+
+        if with_page_info {
+            let page_dict = PyDict::new(py);
+            page_dict.set_item("page", page_idx)?;
+            page_dict.set_item("is_scanned", page.is_scanned)?;
+            pages_list.append(page_dict)?;
+        }
     }
 
     let result_list = PyList::empty(py);
     result_list.append(blocks_list)?;
     result_list.append(images_list)?;
+    if with_page_info {
+        result_list.append(pages_list)?;
+    }
     Ok(result_list)
 }

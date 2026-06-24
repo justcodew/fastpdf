@@ -22,11 +22,40 @@ flashpdf 是**纯数据提取工具**，不是 PDF 渲染器。明确边界：
   **不是**"页面截图"
 - ❌ **不支持页面渲染**：不能把整页渲染成位图（`Page.get_pixmap()` 等价物）
 - ❌ **不支持内容重建**：不会把矢量图、路径、文字光栅化为图像
+- ❌ **不做 OCR**：扫描页上的图文字无法直接转为文本，但能给出
+  `is_scanned` 标记 + 原始图像字节，方便你自己接 OCR 引擎
 
 如果你的需求是"得到每页的 PNG 预览图"或"扫描件 OCR 前的位图输入"，
 请使用 PyMuPDF / ritz / GoMuPDF 等带渲染引擎的库——渲染需要完整的
 PDF interpreter + 光栅化器（MuPDF C 库），这与 flashpdf "纯解析、零渲染"
 的设计目标相悖。
+
+### 扫描页检测
+
+flashpdf **不做 OCR**，但可以**识别**哪些页是扫描的，方便你只对那些页
+调用外部 OCR（Tesseract / PaddleOCR / 云 OCR）。启发式：页内可提取
+文本字符 < 50 且存在覆盖页面 ≥ 70% 的位图。
+
+```python
+import flashpdf
+
+# 默认 (blocks, images) — 向后兼容
+blocks, images = flashpdf.extract("doc.pdf")
+
+# 加 with_page_info=True 拿 per-page 元数据
+blocks, images, pages = flashpdf.extract("doc.pdf", with_page_info=True)
+
+for p in pages:
+    if p["is_scanned"]:
+        # 这一页是扫描的，没有可提取文本
+        # 你可以从 images 里找该页的大图，喂给 OCR
+        page_imgs = [i for i in images if page_bbox_overlap(i, p)]
+        print(f"Page {p['page']}: SCANNED, {len(page_imgs)} image(s) need OCR")
+    else:
+        print(f"Page {p['page']}: electronic text")
+```
+
+对混合文档（部分电子 + 部分扫描）同样有效——按页分别判断。
 
 ## 安装
 
@@ -112,8 +141,10 @@ for page in &result.pages {
 | `include_images` | `bool` | `True` | 是否提取图像数据 |
 | `gpu` | `bool` | `False` | GPU 加速（需要 NVIDIA GPU） |
 | `batch_size` | `int` | `50` | 大文档分批大小（0=不分批） |
+| `with_page_info` | `bool` | `False` | 是否返回 per-page 元数据（含 `is_scanned`） |
 
-**返回值：** `(blocks, images)`
+**返回值：** `(blocks, images)`，或 `with_page_info=True` 时为 `(blocks, images, pages)`
+- `pages`: `[{"page": 0, "is_scanned": False}, ...]`
 
 #### blocks 结构
 
@@ -175,8 +206,10 @@ for page in &result.pages {
 | `include_images` | `bool` | `False` | 是否提取图像 |
 | `gpu` | `bool` | `False` | GPU 加速 |
 | `batch_size` | `int` | `50` | 大文档分批大小 |
+| `with_page_info` | `bool` | `False` | 是否返回 per-page 元数据（含 `is_scanned`） |
 
-**返回值：** `[(path, blocks, images), ...]`
+**返回值：** `[(path, blocks, images), ...]`，`with_page_info=True` 时每项为
+`(path, (blocks, images, pages), ...)`
 
 ### 多线程 vs 单线程：`page_parallel` 怎么选
 
