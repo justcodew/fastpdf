@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.3.0] - 2026-06-26
+
+### Added
+
+- **旋转文本提取（`include_rotated`）**：新增 `ExtractOptions::include_rotated`
+  字段，`open()` / `extract()` / `extract_many()` 均新增同名 Python 关键字参数，
+  默认 `False`。开启后能正确提取 arXiv 侧栏水印（`arXiv:xxxx [category] date`）
+  和图表纵轴标签等通过 `cm`/`Tm` 旋转的文本。
+
+  - 旋转字符通过 TRM = CTM × Tm 的 4-角变换计算 bbox，方向向量驱动 advance
+  - 标准 14 字体无 `/Widths` 时，per-char advance 取 0.5em 经验值，
+    避免 40 字符侧栏跨出页面边界被阅读序过滤器丢弃
+  - 旋转字符独立聚类并**追加到页 block 列表末尾**，不进入 XY-cut 排序，
+    正文 char_sim 与 default 行为字节级保持一致
+
+- **`PageDiagnostics`**（4 类检测，**默认开启**，与 `include_rotated` 无关）：
+  通过 `page.diagnostics` 暴露 per-page 计数，让用户看到"N 个字符被丢弃"，
+  决定是否翻开关重提取或交给 OCR：
+  - `rotated_char_count`: 非轴对齐文本矩阵下生成的字符（arXiv 侧栏水印、
+    图表纵轴标签）。用户看到 > 0 即可知道用 `include_rotated=True` 重提取。
+  - `type3_char_count`: `/Type3` 字体下的字符（字形由绘图算子定义）。
+  - `undecoded_byte_count`: 解码失败回退为 `U+FFFD` 的字节数。
+  - `out_of_page_block_count`: 被 reading-order 边距过滤器丢弃的块数。
+
+### Changed
+
+- `CharInfo` 新增 `rotated: bool` 字段，标记该字符是否在非轴对齐文本矩阵下
+  生成（`Tm` 或 `ctm` 的 b/c 分量非零）。
+- `PageResult` 新增 `diagnostics: PageDiagnostics` 字段。
+  `extract(..., with_page_info=True)` 的 page 字典也带 `diagnostics`。
+- `FontInfo` 新增 `is_type3: bool`，标记 `/Subtype /Type3` 字体；emit 时累计
+  `ContentResult.type3_char_count`。
+- `ContentResult` 新增 `type3_char_count` / `undecoded_byte_count` 计数器，
+  从 `emit_string` 和 Form XObject 递归路径聚合。
+- `layout::reading_order_sort_with_diagnostics` 新增——返回 `(Vec, usize)`，
+  usize 为边距过滤器丢弃的块数。原 `reading_order_sort` 保留为薄包装。
+
+### Notes
+
+- 检测层和策略层解耦：检测总是发生（diagnostics 在 `include_rotated=False`
+  默认模式下也填得满满当当），是否输出由用户开关决定。
+- 默认行为字节级保持不变，arxiv_2604 char_sim vs fitz 仍为 0.9360。
+
 ## [0.2.0] - 2026-06-24
 
 ### Added
@@ -29,41 +72,11 @@
     `ascender/descender/origin` 等 fitz 扩展字段不输出（已在 README 标注）
   - **type=1 image block**：fitz 把图像块和文本块混在同一 `blocks` 数组里，
     flashpdf v0.2.0 同样如此（之前 extract() 是分离的两个 list）
-- **旋转文本提取（`include_rotated`）**：新增 `ExtractOptions::include_rotated`
-  字段，`open()` / `extract()` / `extract_many()` 均新增同名 Python 关键字参数，
-  默认 `False`。开启后能正确提取 arXiv 侧栏水印（`arXiv:xxxx [category] date`）
-  和图表纵轴标签等通过 `cm`/`Tm` 旋转的文本。
-
-  - 旋转字符通过 TRM = CTM × Tm 的 4-角变换计算 bbox，方向向量驱动 advance
-  - 标准 14 字体无 `/Widths` 时，per-char advance 取 0.5em 经验值，
-    避免 40 字符侧栏跨出页面边界被阅读序过滤器丢弃
-  - 旋转字符独立聚类并**追加到页 block 列表末尾**，不进入 XY-cut 排序，
-    正文 char_sim 与 default 行为字节级保持一致
 
 ### Changed
 
 - `PageResult` 新增 `rect: [f64; 4]` 字段（从 /MediaBox 解析），供 `Page.rect`
   属性暴露。所有 `extract_page_batch` 兜底返回也填充默认 letter 尺寸。
-- `CharInfo` 新增 `rotated: bool` 字段，标记该字符是否在非轴对齐文本矩阵下
-  生成（`Tm` 或 `ctm` 的 b/c 分量非零）。
-- `PageResult` 新增 `diagnostics: PageDiagnostics` 字段，per-page 暴露 4 类
-  "可疑内容"计数（见下）。`extract(..., with_page_info=True)` 的 page 字典
-  也带 `diagnostics`。
-- `FontInfo` 新增 `is_type3: bool`，标记 `/Subtype /Type3` 字体；emit 时累计
-  `ContentResult.type3_char_count`。
-- `ContentResult` 新增 `type3_char_count` / `undecoded_byte_count` 计数器，
-  从 `emit_string` 和 Form XObject 递归路径聚合。
-- `layout::reading_order_sort_with_diagnostics` 新增——返回 `(Vec, usize)`，
-  usize 为边距过滤器丢弃的块数。原 `reading_order_sort` 保留为薄包装。
-
-### Added
-
-- **`PageDiagnostics`**（4 类检测，**默认开启**，与 `include_rotated` 无关）：
-  - `rotated_char_count`: 非轴对齐文本矩阵下生成的字符（arXiv 侧栏水印、
-    图表纵轴标签）。用户看到 > 0 即可知道用 `include_rotated=True` 重提取。
-  - `type3_char_count`: `/Type3` 字体下的字符（字形由绘图算子定义）。
-  - `undecoded_byte_count`: 解码失败回退为 `U+FFFD` 的字节数。
-  - `out_of_page_block_count`: 被 reading-order 边距过滤器丢弃的块数。
 
 ### Tests
 
