@@ -46,6 +46,24 @@
   属性暴露。所有 `extract_page_batch` 兜底返回也填充默认 letter 尺寸。
 - `CharInfo` 新增 `rotated: bool` 字段，标记该字符是否在非轴对齐文本矩阵下
   生成（`Tm` 或 `ctm` 的 b/c 分量非零）。
+- `PageResult` 新增 `diagnostics: PageDiagnostics` 字段，per-page 暴露 4 类
+  "可疑内容"计数（见下）。`extract(..., with_page_info=True)` 的 page 字典
+  也带 `diagnostics`。
+- `FontInfo` 新增 `is_type3: bool`，标记 `/Subtype /Type3` 字体；emit 时累计
+  `ContentResult.type3_char_count`。
+- `ContentResult` 新增 `type3_char_count` / `undecoded_byte_count` 计数器，
+  从 `emit_string` 和 Form XObject 递归路径聚合。
+- `layout::reading_order_sort_with_diagnostics` 新增——返回 `(Vec, usize)`，
+  usize 为边距过滤器丢弃的块数。原 `reading_order_sort` 保留为薄包装。
+
+### Added
+
+- **`PageDiagnostics`**（4 类检测，**默认开启**，与 `include_rotated` 无关）：
+  - `rotated_char_count`: 非轴对齐文本矩阵下生成的字符（arXiv 侧栏水印、
+    图表纵轴标签）。用户看到 > 0 即可知道用 `include_rotated=True` 重提取。
+  - `type3_char_count`: `/Type3` 字体下的字符（字形由绘图算子定义）。
+  - `undecoded_byte_count`: 解码失败回退为 `U+FFFD` 的字节数。
+  - `out_of_page_block_count`: 被 reading-order 边距过滤器丢弃的块数。
 
 ### Tests
 

@@ -200,6 +200,13 @@ fn render_extract_result<'py>(
             let page_dict = PyDict::new(py);
             page_dict.set_item("page", page_idx)?;
             page_dict.set_item("is_scanned", page.is_scanned)?;
+            let diag = &page.diagnostics;
+            let diag_dict = PyDict::new(py);
+            diag_dict.set_item("rotated_char_count", diag.rotated_char_count)?;
+            diag_dict.set_item("type3_char_count", diag.type3_char_count)?;
+            diag_dict.set_item("undecoded_byte_count", diag.undecoded_byte_count)?;
+            diag_dict.set_item("out_of_page_block_count", diag.out_of_page_block_count)?;
+            page_dict.set_item("diagnostics", diag_dict)?;
             pages_list.append(page_dict)?;
         }
     }
@@ -364,6 +371,33 @@ impl PyPage {
     #[getter]
     fn bbox(&self) -> [f64; 4] {
         self.page.rect
+    }
+
+    /// Per-page diagnostics: counts of content that was dropped or
+    /// potentially mis-decoded. Non-zero values tell the user "flashpdf
+    /// found N items it couldn't faithfully extract"; the user can then
+    /// decide whether to re-extract with different flags (e.g.
+    /// `include_rotated=True`) or feed the page to an OCR pipeline.
+    ///
+    /// Returns a dict with keys:
+    ///   - `rotated_char_count`: chars under a rotated/sheared text matrix
+    ///     (arXiv sidebars, vertical axis labels). Recoverable via
+    ///     `open(..., include_rotated=True)`.
+    ///   - `type3_char_count`: chars under a /Type3 font (glyph-as-content-stream).
+    ///     Positioning may be off; glyphs without /ToUnicode are unreadable.
+    ///   - `undecoded_byte_count`: bytes that mapped to U+FFFD (missing
+    ///     /ToUnicode or /Encoding).
+    ///   - `out_of_page_block_count`: blocks dropped by the reading-order
+    ///     margin filter (bbox extends >10% outside the page rect).
+    #[getter]
+    fn diagnostics<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new(py);
+        let diag = &self.page.diagnostics;
+        d.set_item("rotated_char_count", diag.rotated_char_count)?;
+        d.set_item("type3_char_count", diag.type3_char_count)?;
+        d.set_item("undecoded_byte_count", diag.undecoded_byte_count)?;
+        d.set_item("out_of_page_block_count", diag.out_of_page_block_count)?;
+        Ok(d)
     }
 }
 

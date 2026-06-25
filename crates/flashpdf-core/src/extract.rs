@@ -55,6 +55,37 @@ pub struct PageResult {
     /// Page rectangle [x0, y0, x1, y1] from /MediaBox (or union-bbox fallback).
     /// Exposed as `page.rect` in the fitz-style API.
     pub rect: [f64; 4],
+    /// Counts of "dropped / suspicious" content the user may want to know
+    /// about. Populated regardless of `include_rotated` — detection always
+    /// runs, output policy is the user's choice via the option flags.
+    pub diagnostics: PageDiagnostics,
+}
+
+/// Per-page diagnostics: counts of content that was dropped or potentially
+/// mis-decoded. Exposed as `page.diagnostics` in Python. Non-zero counts
+/// tell the user "flashpdf found N items it couldn't faithfully extract";
+/// the user can then decide whether to re-extract with different flags
+/// (e.g. `include_rotated=True`) or feed the page to an OCR pipeline.
+#[derive(Debug, Clone, Default)]
+pub struct PageDiagnostics {
+    /// Chars emitted under a non-axis-aligned text matrix (rotated/sheared
+    /// text: arXiv sidebars, vertical chart labels). Dropped by default
+    /// because XY-cut can't mix orientations; pass `include_rotated=True`
+    /// to keep them as appended blocks.
+    pub rotated_char_count: usize,
+    /// Chars emitted under a /Type3 font. Type 3 glyphs are defined by
+    /// drawing operators, not outlines — flashpdf decodes via /Widths +
+    /// ToUnicode when available but positioning may be off and glyphs
+    /// without ToUnicode are unreadable.
+    pub type3_char_count: usize,
+    /// Bytes that could not be mapped to Unicode and were emitted as
+    /// U+FFFD. Indicates missing /ToUnicode or /Encoding on the font.
+    pub undecoded_byte_count: usize,
+    /// Blocks dropped by the reading-order margin filter (bbox extends
+    /// more than 10% outside the page rect). Usually a symptom of
+    /// mis-clustered vector graphics or rotated text whose AABB pokes
+    /// outside the page.
+    pub out_of_page_block_count: usize,
 }
 
 /// Thresholds for the scan-detection heuristic.
@@ -141,6 +172,7 @@ fn extract_page_batch(
                     images: vec![],
                     is_scanned: false,
                     rect: [0.0, 0.0, 612.0, 792.0],
+                    diagnostics: PageDiagnostics::default(),
                 })
             })
             .collect()
@@ -153,6 +185,7 @@ fn extract_page_batch(
                     images: vec![],
                     is_scanned: false,
                     rect: [0.0, 0.0, 612.0, 792.0],
+                    diagnostics: PageDiagnostics::default(),
                 })
             })
             .collect()
@@ -319,9 +352,12 @@ fn extract_single_page(
     };
 
     // Cluster body chars and sort into visual reading order (recursive XY-cut).
+    // The diagnostics variant returns the count of blocks dropped by the
+    // out-of-page margin filter.
     let blocks = cluster_chars(&body_chars, &font_name, font_size, 0);
     let rect = page_rect(&page, &blocks);
-    let mut blocks = crate::layout::reading_order_sort(blocks, rect);
+    let (mut blocks, out_of_page_dropped) =
+        crate::layout::reading_order_sort_with_diagnostics(blocks, rect);
 
     // Cluster rotated chars separately. Each connected run (sidebar, axis
     // label) becomes its own block. Append at end so body reading order is
@@ -331,6 +367,17 @@ fn extract_single_page(
         let mut rot_blocks = cluster_chars(&rot_chars, &font_name, font_size, 0);
         blocks.append(&mut rot_blocks);
     }
+
+    // Assemble diagnostics. Detection runs regardless of include_rotated —
+    // the user sees "N rotated chars were dropped" even in default mode,
+    // and can re-extract with include_rotated=True to recover them.
+    let rotated_char_count = scan_result.chars.iter().filter(|c| c.rotated).count();
+    let diagnostics = PageDiagnostics {
+        rotated_char_count,
+        type3_char_count: scan_result.type3_char_count,
+        undecoded_byte_count: scan_result.undecoded_byte_count,
+        out_of_page_block_count: out_of_page_dropped,
+    };
 
     // Detect scanned page (heuristic: little text + large image covering the page)
     let is_scanned = detect_scanned(&blocks, &scan_result.images, &rect);
@@ -353,6 +400,7 @@ fn extract_single_page(
         images,
         is_scanned,
         rect,
+        diagnostics,
     })
 }
 

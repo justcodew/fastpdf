@@ -69,6 +69,13 @@ pub struct ImageRef {
 pub struct ContentResult {
     pub chars: Vec<CharInfo>,
     pub images: Vec<ImageRef>,
+    /// Chars emitted under a /Type3 font (glyph defined by drawing operators,
+    /// not an outline). Tracked for diagnostics — Type 3 positioning may be
+    /// inaccurate and glyphs without /ToUnicode are unreadable.
+    pub type3_char_count: usize,
+    /// Bytes that could not be mapped to Unicode (emitted as U+FFFD).
+    /// Indicates missing /ToUnicode or /Encoding on the font.
+    pub undecoded_byte_count: usize,
 }
 
 // ─── Operator stack value ───
@@ -807,6 +814,11 @@ fn execute_operator_full(
                             result.images.push(img);
                         }
 
+                        // Merge diagnostics counters from the recursive scan
+                        // so Type3 / undecoded counts bubble up to the caller.
+                        result.type3_char_count += form_result.type3_char_count;
+                        result.undecoded_byte_count += form_result.undecoded_byte_count;
+
                         // Restore graphics state
                         state.restore_gs();
                     }
@@ -945,6 +957,16 @@ fn emit_string(
             let unit_w = char_width / n.max(1) as f64;
             (unit_w, char_width)
         };
+
+        // Diagnostics: count chars emitted under Type 3 fonts and bytes
+        // that decoded to U+FFFD. The diagnostics counters live on
+        // ContentResult so callers can surface "N items couldn't be
+        // faithfully extracted" to the user without re-running the scan.
+        let is_type3_font = font_info.is_some_and(|f| f.is_type3);
+        if is_type3_font {
+            result.type3_char_count += decoded_chars.len();
+        }
+        result.undecoded_byte_count += decoded_chars.iter().filter(|c| **c == '\u{FFFD}').count();
 
         // Decode may yield multiple chars (e.g. TeX ligatures: byte 0x0C →
         // "fi"). Push each with proportional width so the rest of the

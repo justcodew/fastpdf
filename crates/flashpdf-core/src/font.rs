@@ -12,6 +12,12 @@ pub struct FontInfo {
     pub base_font: String,
     pub encoding: Option<String>,
     pub is_type0: bool,
+    /// True if /Subtype is /Type3. Type 3 fonts define each glyph as a
+    /// small content stream rather than an outline; flashpdf treats them
+    /// as ordinary fonts (uses /Widths + ToUnicode if present) but flags
+    /// them so the diagnostics layer can report glyphs that may have
+    /// been mis-decoded or skipped.
+    pub is_type3: bool,
     pub widths: Vec<f64>,
     /// Char code of widths[0] (from /FirstChar). Widths array is indexed
     /// relative to this. PDF spec: /Widths[i] is the width of char code
@@ -517,6 +523,7 @@ pub fn extract_font_info(font_obj: &PdfObject<'_>) -> FontInfo {
         base_font,
         encoding,
         is_type0,
+        is_type3: subtype == b"Type3",
         widths,
         first_char,
         default_width,
@@ -1634,6 +1641,7 @@ mod tests {
             base_font: "Helvetica".into(),
             encoding: None,
             is_type0: false,
+            is_type3: false,
             widths: vec![],
             first_char: 0,
             default_width: 600.0,
@@ -1652,6 +1660,7 @@ mod tests {
             base_font: "Symbol".into(),
             encoding: None,
             is_type0: false,
+            is_type3: false,
             widths: vec![],
             first_char: 0,
             default_width: 600.0,
@@ -1678,6 +1687,7 @@ mod tests {
             base_font: "RPUFKZ+Dingbats".into(),
             encoding: None,
             is_type0: false,
+            is_type3: false,
             widths: vec![],
             first_char: 0,
             default_width: 600.0,
@@ -1703,6 +1713,7 @@ mod tests {
             base_font: "NIWCFP+CMSY8".into(),
             encoding: None,
             is_type0: false,
+            is_type3: false,
             widths: vec![],
             first_char: 0,
             default_width: 600.0,
@@ -1724,6 +1735,7 @@ mod tests {
             base_font: "TestFont".into(),
             encoding: None,
             is_type0: false,
+            is_type3: false,
             widths: vec![],
             first_char: 0,
             default_width: 1000.0,

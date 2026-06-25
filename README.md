@@ -270,6 +270,32 @@ doc = flashpdf.open("arxiv.pdf", include_rotated=True)
 `build_lines` 假设水平流向）。对侧栏水印场景只是"读起来一字一顿"，
 内容是完整可检索的；如果未来要做语义级解析，需要加竖排聚类。
 
+### 诊断信息（`page.diagnostics`，v0.2.0+）
+
+flashpdf 总是**检测**那些可能影响提取保真度的"可疑"内容，并通过
+`page.diagnostics` 暴露计数——即使对应的开关是关的，用户也能看到"有 N 个
+字符被丢弃了"，从而决定是否翻开关重提取或交给 OCR。
+
+```python
+doc = flashpdf.open("paper.pdf")
+for i in range(len(doc)):
+    diag = doc[i].diagnostics
+    if diag["rotated_char_count"] > 0:
+        print(f"page {i}: dropped {diag['rotated_char_count']} rotated chars "
+              f"— retry with include_rotated=True to recover")
+```
+
+| 字段 | 含义 | 触发后的处理建议 |
+|------|------|------------------|
+| `rotated_char_count` | 在非轴对齐文本矩阵下生成的字符（arXiv 侧栏水印、图表纵轴标签） | 用 `open(..., include_rotated=True)` 重新提取 |
+| `type3_char_count` | 在 `/Type3` 字体下生成的字符。Type 3 字形由绘图算子定义，flashpdf 走 `/Widths + ToUnicode` 兜底，定位可能不准、缺映射时读不出来 | 检查是否需要专门的 Type 3 处理器或 OCR |
+| `undecoded_byte_count` | 解码失败回退为 `U+FFFD` 的字节数（字体缺 `/ToUnicode` 或 `/Encoding`） | 通常是字体子集化遗留，OCR 能补回 |
+| `out_of_page_block_count` | 被 reading-order 边距过滤器丢弃的块（bbox 超出页面 10%+） | 多半是矢量图被误聚成"文本"或旋转文本 AABB 越界，需要看原 PDF 确认 |
+
+**默认行为**：检测总是发生，`diagnostics` 在 `include_rotated=False`（默认）
+时也填得满满当当。`extract()` 走 `with_page_info=True` 时每个 page 字典里也
+带 `diagnostics` 字段。
+
 ## API 参考
 
 ### `flashpdf.extract(path, **options)`

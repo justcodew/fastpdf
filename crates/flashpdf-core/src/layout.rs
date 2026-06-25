@@ -470,8 +470,20 @@ const READING_MIN_GAP_FRAC: f64 = 0.015;
 /// Coordinate convention: PDF y-up (origin at bottom-left, y grows upward),
 /// so visually-higher blocks have larger y and sort earlier.
 pub fn reading_order_sort(blocks: Vec<TextBlock>, page_rect: [f64; 4]) -> Vec<TextBlock> {
+    reading_order_sort_with_diagnostics(blocks, page_rect).0
+}
+
+/// Same as `reading_order_sort` but also returns the number of blocks dropped
+/// by the out-of-page margin filter. Used by the diagnostics layer to surface
+/// "N blocks were dropped because their bbox poked outside the page" — the
+/// caller can then investigate (often a sign of mis-clustered vector graphics
+/// or rotated text whose AABB doesn't fit the page rect).
+pub fn reading_order_sort_with_diagnostics(
+    blocks: Vec<TextBlock>,
+    page_rect: [f64; 4],
+) -> (Vec<TextBlock>, usize) {
     if blocks.len() <= 1 {
-        return blocks;
+        return (blocks, 0);
     }
     // Defensive filter: drop blocks whose bbox is far outside the page rect.
     // Two categories of "outside":
@@ -489,6 +501,7 @@ pub fn reading_order_sort(blocks: Vec<TextBlock>, page_rect: [f64; 4]) -> Vec<Te
     let slack_y = page_h * 2.0;
     let margin_x = page_w * 0.1;
     let margin_y = page_h * 0.1;
+    let before = blocks.len();
     let blocks: Vec<TextBlock> = blocks
         .into_iter()
         .filter(|b| {
@@ -507,10 +520,11 @@ pub fn reading_order_sort(blocks: Vec<TextBlock>, page_rect: [f64; 4]) -> Vec<Te
                 && y0 >= page_rect[1] - margin_y
         })
         .collect();
+    let dropped = before - blocks.len();
     if blocks.len() <= 1 {
-        return blocks;
+        return (blocks, dropped);
     }
-    xy_cut(blocks, page_rect)
+    (xy_cut(blocks, page_rect), dropped)
 }
 
 fn xy_cut(mut blocks: Vec<TextBlock>, rect: [f64; 4]) -> Vec<TextBlock> {
