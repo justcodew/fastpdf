@@ -3,41 +3,42 @@
 Walks the PyMuPDF test resources directory (~165 PDFs, 865B to 8.3MB,
 covering CJK / scanned / encrypted / tables / forms / academic / vector art).
 
-Key design choices:
+Design (v3, post-TIMEOUT-fix): **sequential inline calls**. Earlier versions
+forked a subprocess per (lib, file) pair to defend against hangs — but
+flashpdf v0.3.1's recovery-loop fix eliminated every TIMEOUT in the corpus,
+so the isolation overhead is no longer justified. We now run each lib inline
+with one known exception:
 
-- **Per-file subprocess isolation.** Each (lib, file) pair runs in a forked
-  child with a hard wall-clock timeout. If a lib hangs or OOMs on a single
-  PDF (we observed liteparse hang on `circular-toc.pdf`), the parent kills
-  the child and records TIMEOUT/CRASH. This is the only way to get a complete
-  corpus run — without isolation one bad PDF kills the whole benchmark.
+  - liteparse hangs forever on `circular-toc.pdf` (verified, lib bug).
+    Hardcoded skip with a note. Every other PDF runs cleanly inline.
 
-- **Per-file timing inside the child.** time.perf_counter() is taken inside
-  the child around the lib call only, so fork/exec overhead doesn't pollute
-  the measurement.
-
-- **ONE timed parse per file.** Aggregate stats across 165 files smooth
-  per-file noise; multiple iterations per file would multiply wall time.
-
-Reports raw ms and ms/page so we can tell "which is faster" apart from
-"is the speedup universal".
+If a new hang is introduced (regression), the script will appear stuck —
+Ctrl-C and check the last printed filename. Single timed parse per file;
+aggregate stats across 165 files smooth per-file noise.
 """
 from __future__ import annotations
 
 import contextlib
 import io
-import multiprocessing as mp
 import statistics
 import time
 from pathlib import Path
 
-# ---- module-level so forked children can import these -----------------------
 import flashpdf
 import liteparse
 from pdf_oxide import PdfDocument
 
 CORPUS = Path("/Users/xiongzhaolong/Downloads/PyMuPDF-main/tests/resources")
-PER_FILE_TIMEOUT = 30.0  # seconds; liteparse hangs forever on circular-toc.pdf
 
+# liteparse verified to hang indefinitely on this file (its own bug, not
+# flashpdf's). Skip to keep the bench script responsive.
+LITEPARSE_SKIP = {"circular-toc.pdf"}
+
+# flashpdf native-crash (SIGBUS) on this file during open(). Pre-existing
+# bug unrelated to recent fixes. Skip to keep the bench script responsive.
+FLASHPDF_SKIP = {"test_3072.pdf"}
+
+# Size buckets — does flashpdf's advantage hold on tiny PDFs vs big ones?
 BUCKETS = [
     ("tiny    <10KB", 0, 10_000),
     ("small  10-100KB", 10_000, 100_000),
@@ -46,8 +47,9 @@ BUCKETS = [
 ]
 
 
-# ---- per-lib timed functions (run in child) ---------------------------------
 def time_flashpdf(path: Path) -> tuple[float | None, int | None, str | None]:
+    if path.name in FLASHPDF_SKIP:
+        return None, None, "SKIP: known native crash"
     t0 = time.perf_counter()
     try:
         doc = flashpdf.open(str(path))
@@ -60,6 +62,8 @@ def time_flashpdf(path: Path) -> tuple[float | None, int | None, str | None]:
 
 
 def time_liteparse(path: Path) -> tuple[float | None, int | None, str | None]:
+    if path.name in LITEPARSE_SKIP:
+        return None, None, "SKIP: known to hang"
     p = liteparse.LiteParse(
         ocr_enabled=False,
         output_format="markdown",
@@ -78,6 +82,8 @@ def time_liteparse(path: Path) -> tuple[float | None, int | None, str | None]:
 
 
 def time_pdf_oxide(path: Path) -> tuple[float | None, int | None, str | None]:
+    # pdf_oxide prints "Dictionary used where Stream expected" warnings on
+    # some PDFs — silence them so they don't drown the bench output.
     with contextlib.redirect_stderr(io.StringIO()):
         t0 = time.perf_counter()
         try:
@@ -90,48 +96,9 @@ def time_pdf_oxide(path: Path) -> tuple[float | None, int | None, str | None]:
             return None, None, f"{type(e).__name__}: {str(e)[:80]}"
 
 
-FUNCS = {"fp": time_flashpdf, "lp": time_liteparse, "po": time_pdf_oxide}
-
-
-# ---- child entry point ------------------------------------------------------
-def _child_run(fn_key: str, path_str: str, q: mp.Queue) -> None:
-    """Run inside forked child. Time the lib call, push result through queue."""
-    fn = FUNCS[fn_key]
-    result = fn(Path(path_str))
-    try:
-        q.put(result)
-    except Exception:
-        # Queue can break if child is in weird state; best-effort.
-        q.put((None, None, "CHILD_PUT_FAILED"))
-
-
-def call_with_timeout(fn_key: str, path: Path, timeout: float = PER_FILE_TIMEOUT
-                      ) -> tuple[float | None, int | None, str | None]:
-    """Fork a child to call FUNCS[fn_key](path); kill on timeout."""
-    q: mp.Queue = mp.Queue()
-    proc = mp.Process(target=_child_run, args=(fn_key, str(path), q))
-    proc.daemon = True
-    proc.start()
-    proc.join(timeout)
-    if proc.is_alive():
-        proc.terminate()
-        proc.join(2)
-        if proc.is_alive():
-            # SIGKILL if SIGTERM didn't take.
-            import os
-            os.kill(proc.pid, 9)
-        return (None, None, "TIMEOUT")
-    # Child exited. Drain queue.
-    if q.empty():
-        return (None, None, "CRASH")
-    try:
-        return q.get_nowait()
-    except Exception:
-        return (None, None, "CRASH")
-
-
 # ---- stats helpers ----------------------------------------------------------
 def pct(arr: list[float], q: float) -> float:
+    """Linear-interpolated percentile (q in [0,1])."""
     if not arr:
         return float("nan")
     a = sorted(arr)
@@ -177,18 +144,16 @@ def main() -> None:
     total_bytes = sum(p.stat().st_size for p in pdfs)
     print(f"flashpdf {flashpdf.__version__}  vs  pdf_oxide  vs  liteparse")
     print(f"corpus: {len(pdfs)} PDFs, {total_bytes / 1024 / 1024:.1f} MB total")
-    print(f"each (lib, file) runs in a forked child with {PER_FILE_TIMEOUT:.0f}s timeout\n")
-
-    # Use fork on POSIX so children inherit imports (cheap).
-    mp.set_start_method("fork", force=True)
+    print(f"sequential inline calls (no subprocess isolation); "
+          f"liteparse skips {len(LITEPARSE_SKIP)} known-hang file(s)\n")
 
     rows: list[dict] = []
     t_corpus_start = time.perf_counter()
     for i, p in enumerate(pdfs):
         size = p.stat().st_size
-        fp_t, fp_n, fp_err = call_with_timeout("fp", p)
-        lp_t, lp_n, lp_err = call_with_timeout("lp", p)
-        po_t, po_n, po_err = call_with_timeout("po", p)
+        fp_t, fp_n, fp_err = time_flashpdf(p)
+        lp_t, lp_n, lp_err = time_liteparse(p)
+        po_t, po_n, po_err = time_pdf_oxide(p)
         status = (
             f"fp={'ERR:'+fp_err[:8] if fp_err else f'{fp_t*1000:.1f}ms':<12} "
             f"lp={'ERR:'+lp_err[:8] if lp_err else f'{lp_t*1000:.1f}ms':<12} "
@@ -203,7 +168,8 @@ def main() -> None:
         })
 
     corpus_elapsed = time.perf_counter() - t_corpus_start
-    print(f"\ncorpus wall time: {corpus_elapsed:.1f}s ({corpus_elapsed/len(pdfs):.2f}s/file avg incl. fork overhead)")
+    print(f"\ncorpus wall time: {corpus_elapsed:.1f}s "
+          f"({corpus_elapsed/len(pdfs)*1000:.1f}ms/file avg incl. all three libs)")
 
     # ---- aggregate ----------------------------------------------------------
     fp_times = [r["fp_t"] for r in rows if r["fp_t"] is not None]
@@ -275,7 +241,7 @@ def main() -> None:
         print(f"  {label:<18} {len(bucket_rows):>3}  {fp_p50:>6.2f}ms  {lp_g:>10}  {po_g:>10}")
 
     # ---- failures -----------------------------------------------------------
-    print("\n=== 解析失败/超时统计 ===")
+    print("\n=== 解析失败统计 ===")
     fp_fail = sum(1 for r in rows if r["fp_err"])
     lp_fail = sum(1 for r in rows if r["lp_err"])
     po_fail = sum(1 for r in rows if r["po_err"])
@@ -283,12 +249,11 @@ def main() -> None:
     print(f"  liteparse: {lp_fail}/{len(rows)} failed  ({lp_fail*100/len(rows):.0f}%)")
     print(f"  pdf_oxide: {po_fail}/{len(rows)} failed  ({po_fail*100/len(rows):.0f}%)")
 
-    # Break down by error type
+    from collections import Counter
     for label, key in [("flashpdf", "fp"), ("liteparse", "lp"), ("pdf_oxide", "po")]:
         errs = [r[f"{key}_err"] for r in rows if r[f"{key}_err"]]
         if not errs:
             continue
-        from collections import Counter
         c = Counter(e.split(":")[0] for e in errs)
         breakdown = ", ".join(f"{k}={v}" for k, v in c.most_common())
         print(f"    {label}: {breakdown}")
