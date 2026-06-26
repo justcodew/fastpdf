@@ -15,6 +15,7 @@ pub mod font;
 pub mod image;
 pub mod layout;
 pub mod links;
+pub mod outline;
 pub mod parser;
 pub mod types;
 
@@ -24,6 +25,7 @@ pub use font::{build_font_map, parse_cmap, CIDFontInfo, CIDWidthRange, CMap, Fon
 pub use image::{encode_png, resolve_images, ExtractedImage, ImageData};
 pub use layout::cluster_chars;
 pub use links::{extract_links, extract_page_links, LinkKind, PageLink};
+pub use outline::{extract_toc, TocItem};
 pub use parser::{
     content_stream, parse_object, parse_object_from_bytes, scan_content_stream, ContentResult,
     Cursor, ImageRef, ParseError, ParseResult, TextBlock, TextLine, TextSpan,

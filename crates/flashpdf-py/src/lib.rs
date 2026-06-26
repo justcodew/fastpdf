@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList};
+use pyo3::types::{PyBytes, PyDict, PyList, PyString};
 use std::sync::Arc;
 
 /// FlashPDF — high-performance PDF text and image extraction.
@@ -193,6 +193,64 @@ fn opt_str_to_py<'py>(py: Python<'py>, s: &str) -> Bound<'py, PyAny> {
     }
 }
 
+/// Render a TocItem as a fitz-style dict (rich mode of `get_toc`).
+fn toc_item_to_dict<'py>(
+    py: Python<'py>,
+    item: &flashpdf_core::TocItem,
+) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new(py);
+    d.set_item("level", item.level)?;
+    d.set_item("title", &item.title)?;
+    // 1-based page (0 = unresolved) to match fitz simple mode; the raw 0-based
+    // value is exposed as `page0` for callers that want to index `doc[i]`.
+    let page_1b = item.page.map(|p| p as i64 + 1).unwrap_or(0);
+    d.set_item("page", page_1b)?;
+    d.set_item("page0", {
+        match item.page {
+            Some(p) => p.into_pyobject(py)?.into_any(),
+            None => py.None().into_bound(py).into_any(),
+        }
+    })?;
+    d.set_item(
+        "kind",
+        match item.kind {
+            Some(flashpdf_core::LinkKind::Uri) => "uri",
+            Some(flashpdf_core::LinkKind::Goto) => "goto",
+            Some(flashpdf_core::LinkKind::Named) => "named",
+            Some(flashpdf_core::LinkKind::Launch) => "launch",
+            Some(flashpdf_core::LinkKind::GotoR) => "gotor",
+            None => "",
+        },
+    )?;
+    d.set_item(
+        "uri",
+        match &item.uri {
+            Some(s) => PyString::new(py, s).into_any(),
+            None => py.None().into_bound(py).into_any(),
+        },
+    )?;
+    d.set_item(
+        "to_point",
+        match item.to_point {
+            Some([x, y]) => {
+                let arr = PyList::empty(py);
+                arr.append(x)?;
+                arr.append(y)?;
+                arr.into_any()
+            }
+            None => py.None().into_bound(py).into_any(),
+        },
+    )?;
+    d.set_item(
+        "name",
+        match &item.name {
+            Some(s) => PyString::new(py, s).into_any(),
+            None => py.None().into_bound(py).into_any(),
+        },
+    )?;
+    Ok(d)
+}
+
 /// Render an ExtractResult into a Python list of [blocks, images] or
 /// [blocks, images, pages] when `with_page_info` is set.
 fn render_extract_result<'py>(
@@ -299,6 +357,9 @@ pub struct PyDocument {
     /// when the header is missing/malformed. Surfaced as part of
     /// `doc.metadata["format"]` for fitz parity (`"PDF 1.7"`).
     pdf_version: Option<String>,
+    /// Outline / table of contents, extracted by walking `/Outlines` at
+    /// open time. Empty when the PDF has no outline.
+    toc: Vec<flashpdf_core::TocItem>,
 }
 
 #[pymethods]
@@ -376,6 +437,31 @@ impl PyDocument {
     /// `open()` returns. Provided for fitz API parity (`doc.close()`).
     fn close(&self) {}
 
+    /// Document outline (table of contents). Mirrors `fitz.Document.get_toc`.
+    ///
+    /// - `simple=True` (default): list of `[level, title, page]` where
+    ///   `page` is 1-based (0 means unresolved), matching fitz simple mode.
+    /// - `simple=False`: list of dicts with extra fields (`kind`, `uri`,
+    ///   `to_point`, `name`) for richer link-type detection.
+    #[pyo3(signature = (simple=true))]
+    fn get_toc<'py>(&self, py: Python<'py>, simple: bool) -> PyResult<Bound<'py, PyList>> {
+        let list = PyList::empty(py);
+        for item in &self.toc {
+            if simple {
+                // fitz convention: 1-based page (0 = unresolved)
+                let page_1b = item.page.map(|p| p as i64 + 1).unwrap_or(0);
+                let row = PyList::empty(py);
+                row.append(item.level as i64)?;
+                row.append(&item.title)?;
+                row.append(page_1b)?;
+                list.append(row)?;
+            } else {
+                list.append(toc_item_to_dict(py, item)?)?;
+            }
+        }
+        Ok(list)
+    }
+
     fn __enter__(slf: Bound<'_, Self>) -> Bound<'_, Self> {
         slf
     }
@@ -404,10 +490,20 @@ impl PyDocument {
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         let pages = result.pages.into_iter().map(Arc::new).collect();
 
+        // Outline extraction: re-open as a Document to walk /Outlines. The
+        // mmap is cheap; the alternative would be threading toc through
+        // ExtractResult, but outline extraction is independent of the page
+        // extraction pipeline and easier to keep isolated here.
+        let toc = match flashpdf_core::Document::open(path) {
+            Ok(doc) => flashpdf_core::extract_toc(&doc).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+
         Ok(Self {
             pages,
             metadata: result.metadata,
             pdf_version: result.pdf_version,
+            toc,
         })
     }
 }
