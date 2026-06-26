@@ -150,6 +150,13 @@ pub fn extract(path: &str, options: &ExtractOptions) -> ParseResult<ExtractResul
 
 /// Extract from an already-opened Document.
 pub fn extract_doc(doc: &Document, options: &ExtractOptions) -> ParseResult<ExtractResult> {
+    let span = tracing::span!(
+        tracing::Level::DEBUG,
+        "extract_doc",
+        page_count_guess = tracing::field::Empty,
+    );
+    let _enter = span.enter();
+    tracing::debug!(version = ?doc.pdf_version(), encrypted = doc.is_encrypted(), "starting extract");
     // Try the spec-compliant /Pages /Kids walk first. If the page tree is
     // broken (dangling /Pages ref, missing /Kids — common in Word/Office
     // exports and bug-regression PDFs), fall back to scanning every xref

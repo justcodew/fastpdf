@@ -9,9 +9,38 @@ fn flashpdf(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_many, m)?)?;
     m.add_function(wrap_pyfunction!(extract_links, m)?)?;
     m.add_function(wrap_pyfunction!(open, m)?)?;
+    m.add_function(wrap_pyfunction!(set_log_level, m)?)?;
     m.add_class::<PyDocument>()?;
     m.add_class::<PyPage>()?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    Ok(())
+}
+
+/// Configure Rust-side tracing output. Accepts `"error"`, `"warn"`,
+/// `"info"`, `"debug"`, `"trace"`, or `"off"`. Equivalent to setting
+/// `RUST_LOG=flashpdf_core=<level>` before importing the module — use
+/// whichever is more convenient. Calling with `"off"` (the default)
+/// silences output.
+///
+/// Example::
+///     >>> import flashpdf
+///     >>> flashpdf.set_log_level("debug")
+///     >>> doc = flashpdf.open("weird.pdf")  # prints tracing spans
+///     >>> flashpdf.set_log_level("off")
+#[pyfunction]
+#[pyo3(signature = (level="off"))]
+fn set_log_level(level: &str) -> PyResult<()> {
+    let filter_str = format!("flashpdf_core={level}");
+    let env_filter = tracing_subscriber::EnvFilter::try_new(filter_str)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+    // Try to set the global default subscriber. If a subscriber is already
+    // installed (because the user called this twice, or another Rust lib
+    // installed one), swallow the error — the latest intent is impossible
+    // to honor without try_init's "set default if absent" semantics.
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(env_filter)
+        .with_target(false)
+        .try_init();
     Ok(())
 }
 

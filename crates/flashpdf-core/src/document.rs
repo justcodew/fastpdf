@@ -177,6 +177,8 @@ impl Document {
 
     /// Parse a PDF from an existing memory-mapped region.
     pub fn from_mmap(mmap: Mmap) -> ParseResult<Self> {
+        let span = tracing::span!(tracing::Level::DEBUG, "from_mmap", size = mmap.len());
+        let _enter = span.enter();
         let data: &[u8] = &mmap;
 
         // Try standard xref parsing first; fall back to memchr recovery

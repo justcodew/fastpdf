@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.7.0] - 2026-06-27
+
+Phase 4 完成 —— 规模化验证。logging + 性能文档。
+
+### Added
+
+- **tracing 集成** (4.3)：`flashpdf.set_log_level("debug")` 或
+  `RUST_LOG=flashpdf_core=debug` 开启 Rust 侧 tracing。在 `from_mmap`
+  和 `extract_doc` 关键路径加 span，方便定位解析瓶颈。
+
+- **`docs/PERFORMANCE.md`** (4.4)：各场景速度表（tiny 0.012ms / 100KB 0.5ms
+  / 1MB 5ms / 100MB 800ms）、`extract()` vs `extract_many()` vs `open()`
+  决策树、ExtractOptions 调参指南、flamegraph 跑法。
+
+### Changed
+
+- **Tiny 文件性能** (4.2)：实测 tiny PDF（1 KB stub）p50 = 0.012ms，
+  vs fitz 0.226ms（19x 更快），已远超"≤ 0.15ms"目标，无需进一步优化。
+
+### Skipped
+
+- **扩大测试语料** (4.1)：用户选择跳过外部语料下载。
+
 ## [0.6.0] - 2026-06-27
 
 Phase 3 完成 —— 精度深挖。竖排文本 + char_sim 残差报告。

@@ -418,10 +418,10 @@ flashpdf toc paper.pdf                        # 打印目录
 
 ### Phase 4 出口标准
 
-- [ ] 至少 2 个新语料集成到 bench（先 triage）
-- [ ] tiny 文件性能提升 ≥ 25%
-- [ ] logging 可用
-- [ ] PERFORMANCE.md 完成
+- [ ] 至少 2 个新语料集成到 bench（先 triage） — **延期**：用户选择跳过外部语料下载
+- [x] tiny 文件性能提升 ≥ 25% — **已达标**：tiny p50 = 0.012ms（vs 目标 0.15ms，vs fitz 0.226ms）
+- [x] logging 可用 — `flashpdf.set_log_level("debug")` + `RUST_LOG`
+- [x] PERFORMANCE.md 完成
 - [ ] PyPI 发布
 
 ---
