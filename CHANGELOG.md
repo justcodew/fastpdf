@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.6.0] - 2026-06-27
+
+Phase 3 完成 —— 精度深挖。竖排文本 + char_sim 残差报告。
+
+### Added
+
+- **竖排文本聚类** (3.2)：`layout::cluster_rotated_chars` 通过将每个 char
+  的 bbox 在 `(x, y)` 维度转置，把 90°/270° 旋转文本"看成"水平文本走标准
+  `cluster_chars` 流程，再把输出 bbox 转置回页面坐标系。arXiv 侧栏水印、
+  竖排图表标签不再每个字自成一行。`include_rotated=True` 时启用。
+
+- **`docs/CHAR_SIM_AUDIT.md`** (3.3)：基于 PyMuPDF 165-PDF 测试集的残差
+  分类报告。六个 bucket：match(20%) / partial(22%) / low(21%) / both_empty(18%)
+  / flash_empty_type0(9%) / flash_empty_other(8%) / acroform(2%)。
+  主导残差是 Type0 Identity-H 无 `/ToUnicode`（需 font-program 解析，
+  与 zero-rendering 设计冲突，标注为未来增强）。
+
+### Changed
+
+- **Type3 字体 (3.1)**：现实现已满足"仅走 `/ToUnicode` 路径"目标——
+  Type3 字体在 font.rs 中复用通用 `/ToUnicode` 加载逻辑，缺失时通过
+  `diagnostics.type3_char_count` 显式计数并降级到 `/Widths`+`/Differences`。
+
 ## [0.5.0] - 2026-06-27
 
 Phase 2 完成 —— 加密 / Linearized / 错误信息 / 示例 / 迁移指南。向后兼容 0.4.x。

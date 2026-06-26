@@ -14,6 +14,7 @@ const SPAN_GAP_FACTOR: f64 = 0.3;
 const LINE_VERT_FACTOR: f64 = 0.5;
 /// Minimum vertical gap between lines to start a new block (as fraction of font size).
 const BLOCK_GAP_FACTOR: f64 = 1.5;
+
 /// Cluster extracted characters into spans, lines, and blocks.
 ///
 /// Input: flat list of CharInfo from content stream scanning. Each CharInfo
@@ -53,6 +54,66 @@ pub fn cluster_chars(
 
     // Step 2: Merge hyphenated words across lines
     merge_hyphenated_lines(blocks)
+}
+
+/// Cluster rotated/vertical chars by transposing their bboxes through 90°,
+/// running the normal horizontal clustering, then transposing back.
+///
+/// For text rotated 90°/270°, the per-char bbox's "advance axis" runs along
+/// the page's Y axis instead of X. The standard `cluster_chars` treats X as
+/// the line axis and Y as the line-break axis — exactly backwards for
+/// vertical text — so each char ends up in its own one-char span/line/block.
+///
+/// Swapping (x, y) inside each bbox before clustering flips the geometry so
+/// `build_spans` / `build_lines` see vertical text as if it were horizontal,
+/// producing correctly-grouped lines. The output bbox is then swapped back
+/// so consumers see the original page-space coordinates.
+///
+/// For sheared/non-90° rotations (rare) the transpose is approximate but
+/// still produces better grouping than the default path.
+pub fn cluster_rotated_chars(
+    chars: &[CharInfo],
+    font: &str,
+    font_size: f64,
+    color: u32,
+    font_flags: u32,
+) -> Vec<TextBlock> {
+    if chars.is_empty() {
+        return Vec::new();
+    }
+    // Transpose: swap x↔y in each bbox. CharInfo.c and .size are unaffected.
+    // The `rotated` flag is preserved so downstream filters (include_rotated)
+    // still recognize these as rotated.
+    let transposed: Vec<CharInfo> = chars
+        .iter()
+        .map(|c| CharInfo {
+            c: c.c,
+            bbox: [c.bbox[1], c.bbox[0], c.bbox[3], c.bbox[2]],
+            size: c.size,
+            rotated: c.rotated,
+        })
+        .collect();
+    let mut blocks = cluster_chars(&transposed, font, font_size, color, font_flags);
+    // Swap bbox back in every span/line/block so coordinates return to
+    // page space. Block/span/line bboxes are independent — fix each layer.
+    for block in &mut blocks {
+        block.bbox = swap_bbox(block.bbox);
+        for line in &mut block.lines {
+            line.bbox = swap_bbox(line.bbox);
+            for span in &mut line.spans {
+                span.bbox = swap_bbox(span.bbox);
+                for ch in &mut span.chars {
+                    ch.bbox = swap_bbox(ch.bbox);
+                }
+            }
+        }
+    }
+    blocks
+}
+
+#[inline]
+fn swap_bbox(b: [f64; 4]) -> [f64; 4] {
+    [b[1], b[0], b[3], b[2]]
 }
 
 /// Detect column boundaries at the span level.

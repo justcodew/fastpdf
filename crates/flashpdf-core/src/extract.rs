@@ -412,11 +412,14 @@ fn extract_single_page(
         crate::layout::reading_order_sort_with_diagnostics(blocks, rect);
 
     // Cluster rotated chars separately. Each connected run (sidebar, axis
-    // label) becomes its own block. Append at end so body reading order is
-    // preserved — this matches the documented behavior that rotated text
-    // is not woven into the XY-cut output.
+    // label) becomes its own block. Use the transpose-then-cluster path so
+    // 90°/270°-rotated text groups into proper lines instead of one char
+    // per span. Append at end so body reading order is preserved — this
+    // matches the documented behavior that rotated text is not woven into
+    // the XY-cut output.
     if !rot_chars.is_empty() {
-        let mut rot_blocks = cluster_chars(&rot_chars, &font_name, font_size, 0, font_flags);
+        let mut rot_blocks =
+            crate::layout::cluster_rotated_chars(&rot_chars, &font_name, font_size, 0, font_flags);
         blocks.append(&mut rot_blocks);
     }
 

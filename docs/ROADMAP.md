@@ -334,10 +334,10 @@ flashpdf toc paper.pdf                        # 打印目录
 
 ### Phase 3 出口标准
 
-- [ ] Type3 至少 `/ToUnicode` 路径走通
-- [ ] 竖排文本可读流利
-- [ ] `CHAR_SIM_AUDIT.md` 完成，每类残差有解释
-- [ ] diagnostics 计数在 corpus 上整体下降
+- [x] Type3 至少 `/ToUnicode` 路径走通
+- [x] 竖排文本可读流利（`cluster_rotated_chars` 通过坐标转置走标准聚类）
+- [x] `CHAR_SIM_AUDIT.md` 完成，每类残差有解释
+- [x] diagnostics 计数在 corpus 上整体下降（rotated_char_count 已分桶）
 - [ ] PyPI 发布
 
 ---
