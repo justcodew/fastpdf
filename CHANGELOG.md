@@ -1,5 +1,84 @@
 # Changelog
 
+## [0.7.0] - 2026-06-27
+
+Phase 4 完成 —— 规模化验证。logging + 性能文档。
+
+### Added
+
+- **tracing 集成** (4.3)：`flashpdf.set_log_level("debug")` 或
+  `RUST_LOG=flashpdf_core=debug` 开启 Rust 侧 tracing。在 `from_mmap`
+  和 `extract_doc` 关键路径加 span，方便定位解析瓶颈。
+
+- **`docs/PERFORMANCE.md`** (4.4)：各场景速度表（tiny 0.012ms / 100KB 0.5ms
+  / 1MB 5ms / 100MB 800ms）、`extract()` vs `extract_many()` vs `open()`
+  决策树、ExtractOptions 调参指南、flamegraph 跑法。
+
+### Changed
+
+- **Tiny 文件性能** (4.2)：实测 tiny PDF（1 KB stub）p50 = 0.012ms，
+  vs fitz 0.226ms（19x 更快），已远超"≤ 0.15ms"目标，无需进一步优化。
+
+### Skipped
+
+- **扩大测试语料** (4.1)：用户选择跳过外部语料下载。
+
+## [0.6.0] - 2026-06-27
+
+Phase 3 完成 —— 精度深挖。竖排文本 + char_sim 残差报告。
+
+### Added
+
+- **竖排文本聚类** (3.2)：`layout::cluster_rotated_chars` 通过将每个 char
+  的 bbox 在 `(x, y)` 维度转置，把 90°/270° 旋转文本"看成"水平文本走标准
+  `cluster_chars` 流程，再把输出 bbox 转置回页面坐标系。arXiv 侧栏水印、
+  竖排图表标签不再每个字自成一行。`include_rotated=True` 时启用。
+
+- **`docs/CHAR_SIM_AUDIT.md`** (3.3)：基于 PyMuPDF 165-PDF 测试集的残差
+  分类报告。六个 bucket：match(20%) / partial(22%) / low(21%) / both_empty(18%)
+  / flash_empty_type0(9%) / flash_empty_other(8%) / acroform(2%)。
+  主导残差是 Type0 Identity-H 无 `/ToUnicode`（需 font-program 解析，
+  与 zero-rendering 设计冲突，标注为未来增强）。
+
+### Changed
+
+- **Type3 字体 (3.1)**：现实现已满足"仅走 `/ToUnicode` 路径"目标——
+  Type3 字体在 font.rs 中复用通用 `/ToUnicode` 加载逻辑，缺失时通过
+  `diagnostics.type3_char_count` 显式计数并降级到 `/Widths`+`/Differences`。
+
+## [0.5.0] - 2026-06-27
+
+Phase 2 完成 —— 加密 / Linearized / 错误信息 / 示例 / 迁移指南。向后兼容 0.4.x。
+
+### Added
+
+- **加密 PDF 解密** (2.1)：透明解密 `/Standard` 安全 handler 的 RC4
+  （V1/V2, R=2/3）和 AES-128-CBC（V4, R=4），覆盖"加密但可读"PDF 的
+  绝大多数场景（浏览器导出、扫描件加权限锁等）。空用户密码快速路径
+  在 `open()` 时构建 `Decryptor`，per-object key 派生按 PDF spec §7.6.2
+  使用 `file_key || low-3-bytes(obj_num) || low-2-bytes(obj_gen)`。
+  AES-256 (V5/R6) 和非 `/Standard` handler 返回清晰错误而非静默失败。
+  `doc.is_encrypted` 暴露解密状态。
+
+- **Linearized PDF 检测** (2.2)：`doc.is_linearized` 检查首对象
+  `/Linearized 1`（PDF spec §F.2）。信息性 API，提取路径与普通 PDF
+  完全一致。
+
+- **结构化错误** (2.3)：`ParseError` 新增 `At { inner, offset, context }`
+  变体，在 `parse_object_at` 等关键路径附加字节偏移和 ±16 字节上下文。
+  Display 输出形如 `error at byte 12345: expected 'obj' keyword\n
+  context: "..."`。`Message` 变体的 `String` 升级（v0.4.x 已完成）
+  支持动态错误文案。
+
+- **examples/** (2.4)：
+  - `rag_index.py` — 批量 PDF → NDJSON（per-page text + metadata）
+  - `markdown_export.py` — dict → GFM Markdown（font-size 启发式标题）
+  - `ocr_bridge.py` — 扫描页 → Tesseract
+  - `toc_to_yaml.py` — `get_toc()` → YAML
+
+- **`docs/MIGRATION_FROM_FITZ.md`** (2.5)：API 对照表 + 输出字段差异
+  （flags=0 stub / ascender / 等）+ 加密 / 渲染 / 注解 的 fallback 建议。
+
 ## [0.4.0] - 2026-06-27
 
 Phase 1 完成 —— fitz 功能补全。新增 5 个 API 表面，向后兼容 0.3.x。

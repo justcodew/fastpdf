@@ -62,8 +62,21 @@ pub struct XrefTable {
     pub size: u32,
     /// /Info reference (optional)
     pub info: Option<ObjectId>,
-    /// /Encrypt reference (optional — we don't support encryption, but record it)
+    /// /Encrypt reference (optional — resolved lazily into a Decryptor by Document).
+    /// None for unencrypted PDFs AND for the inline-dict case (use encrypt_present
+    /// to disambiguate).
     pub encrypt: Option<ObjectId>,
+    /// True iff `/Encrypt` is present in any form (ref or inline dict). When
+    /// true but `encrypt` is None, Document re-parses the trailer at
+    /// `trailer_offset` to read the inline dict.
+    pub encrypt_present: bool,
+    /// Byte offset of the trailer (xref table) or xref-stream dict. Used to
+    /// re-parse the inline `/Encrypt` dict when needed.
+    pub trailer_offset: Option<usize>,
+    /// First element of the trailer `/ID` array. Required salt for the
+    /// standard encryption key derivation; empty when /ID is absent
+    /// (which makes encrypted PDFs undecryptable).
+    pub id_first: Option<Vec<u8>>,
 }
 
 impl XrefTable {
@@ -82,7 +95,7 @@ pub fn parse_xref_table(data: &[u8], startxref_offset: usize) -> ParseResult<Xre
 
     // Expect "xref"
     if !cur.remaining().starts_with(b"xref") {
-        return Err(ParseError::Message("expected 'xref' keyword"));
+        return Err(ParseError::Message("expected 'xref' keyword".to_string()));
     }
     cur.advance(4);
     cur.skip_ws();
@@ -116,7 +129,11 @@ pub fn parse_xref_table(data: &[u8], startxref_offset: usize) -> ParseResult<Xre
             let in_use = match cur.peek() {
                 Some(b'n') => true,
                 Some(b'f') => false,
-                _ => return Err(ParseError::Message("expected 'n' or 'f' in xref entry")),
+                _ => {
+                    return Err(ParseError::Message(
+                        "expected 'n' or 'f' in xref entry".to_string(),
+                    ))
+                }
             };
             cur.advance(1);
 
@@ -134,17 +151,24 @@ pub fn parse_xref_table(data: &[u8], startxref_offset: usize) -> ParseResult<Xre
     // Parse trailer dictionary
     cur.skip_ws();
     if !cur.remaining().starts_with(b"trailer") {
-        return Err(ParseError::Message("expected 'trailer' keyword"));
+        return Err(ParseError::Message(
+            "expected 'trailer' keyword".to_string(),
+        ));
     }
     cur.advance(7);
 
     let trailer_obj = parse_object(&mut cur)?;
     let trailer_dict = match &trailer_obj {
         PdfObject::Dict(d) => d,
-        _ => return Err(ParseError::Message("trailer must be a dictionary")),
+        _ => {
+            return Err(ParseError::Message(
+                "trailer must be a dictionary".to_string(),
+            ))
+        }
     };
 
-    let (root, size, info, encrypt) = extract_trailer_fields(trailer_dict)?;
+    let (root, size, info, encrypt, encrypt_present, id_first) =
+        extract_trailer_fields(trailer_dict)?;
 
     // Merge entries (later xref sections override earlier ones via /Prev chain)
     Ok(XrefTable {
@@ -153,6 +177,9 @@ pub fn parse_xref_table(data: &[u8], startxref_offset: usize) -> ParseResult<Xre
         size,
         info,
         encrypt,
+        encrypt_present,
+        trailer_offset: Some(startxref_offset),
+        id_first,
     })
 }
 
@@ -174,8 +201,13 @@ pub fn parse_xref_stream_obj(
     let root = extract_ref_field(stream_dict, b"Root")?;
     // Extract /Info (optional)
     let info = extract_ref_field_opt(stream_dict, b"Info");
-    // Extract /Encrypt (optional)
+    // Extract /Encrypt (optional — may be ref or inline dict)
     let encrypt = extract_ref_field_opt(stream_dict, b"Encrypt");
+    let encrypt_present = encrypt.is_some()
+        || stream_dict
+            .iter()
+            .any(|(k, v)| *k == b"Encrypt" && matches!(v, PdfObject::Dict(_)));
+    let id_first = extract_id_first(stream_dict);
 
     // Compute total entry count from /Index
     let total_count: u32 = index.iter().map(|(_, count)| count).sum();
@@ -183,7 +215,9 @@ pub fn parse_xref_stream_obj(
     // Each entry is W1+W2+W3 bytes
     let entry_size = (w[0] + w[1] + w[2]) as usize;
     if stream_data.len() < total_count as usize * entry_size {
-        return Err(ParseError::Message("xref stream data too short"));
+        return Err(ParseError::Message(
+            "xref stream data too short".to_string(),
+        ));
     }
 
     let mut entries: HashMap<u32, XrefEntry> = HashMap::new();
@@ -206,6 +240,9 @@ pub fn parse_xref_stream_obj(
         size,
         info,
         encrypt,
+        encrypt_present,
+        trailer_offset: None,
+        id_first,
     })
 }
 
@@ -233,7 +270,9 @@ fn parse_xref_stream_entry(data: &[u8], w: [u16; 3]) -> ParseResult<XrefEntry> {
         0 => Ok(XrefEntry::free(f3, f2)),
         1 => Ok(XrefEntry::uncompressed(f2, f3)),
         2 => Ok(XrefEntry::compressed(f2, f3)),
-        _ => Err(ParseError::Message("unknown xref stream entry type")),
+        _ => Err(ParseError::Message(
+            "unknown xref stream entry type".to_string(),
+        )),
     }
 }
 
@@ -249,14 +288,58 @@ fn read_uint_field(data: &[u8]) -> ParseResult<u32> {
 // ─── Trailer parsing & chain walking ───
 
 /// Parse trailer fields from a dictionary.
+/// Returns (root, size, info, encrypt_ref, encrypt_present, id_first).
+/// `encrypt_present` is true iff /Encrypt appears in any form (ref or inline
+/// dict); when true but `encrypt_ref` is None, Document must re-parse the
+/// trailer at `trailer_offset` to read the inline dict.
 fn extract_trailer_fields(
     dict: &[(&[u8], PdfObject<'_>)],
-) -> ParseResult<(ObjectId, u32, Option<ObjectId>, Option<ObjectId>)> {
+) -> ParseResult<(
+    ObjectId,
+    u32,
+    Option<ObjectId>,
+    Option<ObjectId>,
+    bool,
+    Option<Vec<u8>>,
+)> {
     let root = extract_ref_field(dict, b"Root")?;
     let size = extract_field_u32(dict, b"Size")?;
     let info = extract_ref_field_opt(dict, b"Info");
     let encrypt = extract_ref_field_opt(dict, b"Encrypt");
-    Ok((root, size, info, encrypt))
+    // /Encrypt can be either an indirect-object ref (`/Encrypt N 0 R`) or an
+    // inline dict (`/Encrypt<<...>>`). fitz-generated files use the inline
+    // form; the ref-only extractor above misses those, so detect the inline
+    // case here via a separate pass.
+    let encrypt_present = encrypt.is_some()
+        || dict
+            .iter()
+            .any(|(k, v)| *k == b"Encrypt" && matches!(v, PdfObject::Dict(_)));
+    // /ID is an array of two strings; the first is the document ID used as
+    // a salt for the standard encryption key derivation.
+    let id_first = extract_id_first(dict);
+    Ok((root, size, info, encrypt, encrypt_present, id_first))
+}
+
+fn extract_id_first(dict: &[(&[u8], PdfObject<'_>)]) -> Option<Vec<u8>> {
+    for (k, v) in dict {
+        if *k == b"ID" {
+            if let PdfObject::Array(arr) = v {
+                if let Some(PdfObject::String(s)) = arr.first() {
+                    return Some(crate::document::unescape_literal_string(s));
+                }
+                if let Some(PdfObject::HexString(s)) = arr.first() {
+                    // HexString stores raw ASCII hex text; decode to bytes
+                    // for use as the key-derivation salt.
+                    if let Some(decoded) = crate::document::hex_decode(s) {
+                        return Some(decoded);
+                    }
+                    return None;
+                }
+            }
+            return None;
+        }
+    }
+    None
 }
 
 fn extract_ref_field(dict: &[(&[u8], PdfObject<'_>)], key: &[u8]) -> ParseResult<ObjectId> {
@@ -265,10 +348,14 @@ fn extract_ref_field(dict: &[(&[u8], PdfObject<'_>)], key: &[u8]) -> ParseResult
             if let PdfObject::Ref(id) = v {
                 return Ok(*id);
             }
-            return Err(ParseError::Message("expected reference for trailer field"));
+            return Err(ParseError::Message(
+                "expected reference for trailer field".to_string(),
+            ));
         }
     }
-    Err(ParseError::Message("missing required trailer field"))
+    Err(ParseError::Message(
+        "missing required trailer field".to_string(),
+    ))
 }
 
 fn extract_ref_field_opt(dict: &[(&[u8], PdfObject<'_>)], key: &[u8]) -> Option<ObjectId> {
@@ -285,13 +372,14 @@ fn extract_ref_field_opt(dict: &[(&[u8], PdfObject<'_>)], key: &[u8]) -> Option<
 fn extract_field_u32(dict: &[(&[u8], PdfObject<'_>)], key: &[u8]) -> ParseResult<u32> {
     for (k, v) in dict {
         if *k == key {
-            return v
-                .as_i64()
-                .map(|n| n as u32)
-                .ok_or(ParseError::Message("expected integer for trailer field"));
+            return v.as_i64().map(|n| n as u32).ok_or(ParseError::Message(
+                "expected integer for trailer field".to_string(),
+            ));
         }
     }
-    Err(ParseError::Message("missing required trailer field"))
+    Err(ParseError::Message(
+        "missing required trailer field".to_string(),
+    ))
 }
 
 fn extract_w_array(dict: &[(&[u8], PdfObject<'_>)]) -> ParseResult<[u16; 3]> {
@@ -306,10 +394,12 @@ fn extract_w_array(dict: &[(&[u8], PdfObject<'_>)]) -> ParseResult<[u16; 3]> {
                     ]);
                 }
             }
-            return Err(ParseError::Message("/W must be an array of 3 integers"));
+            return Err(ParseError::Message(
+                "/W must be an array of 3 integers".to_string(),
+            ));
         }
     }
-    Err(ParseError::Message("missing /W in xref stream"))
+    Err(ParseError::Message("missing /W in xref stream".to_string()))
 }
 
 fn extract_index_array(dict: &[(&[u8], PdfObject<'_>)]) -> Option<Vec<(u32, u32)>> {
@@ -351,7 +441,7 @@ pub fn find_startxref(data: &[u8]) -> ParseResult<usize> {
         }
     }
 
-    let found = found.ok_or(ParseError::Message("startxref not found"))?;
+    let found = found.ok_or(ParseError::Message("startxref not found".to_string()))?;
     let after_keyword = &search_area[found + needle.len()..];
 
     // Parse the integer after startxref
@@ -475,7 +565,7 @@ pub fn decompress_flate(data: &[u8]) -> ParseResult<Vec<u8>> {
     let mut output = Vec::new();
     decoder
         .read_to_end(&mut output)
-        .map_err(|_| ParseError::Message("flate decompression failed"))?;
+        .map_err(|_| ParseError::Message("flate decompression failed".to_string()))?;
     Ok(output)
 }
 
@@ -595,12 +685,14 @@ pub fn decode_ascii85(data: &[u8]) -> ParseResult<Vec<u8>> {
                 if i < data.len() && data[i] == b'>' {
                     break;
                 }
-                return Err(ParseError::Message("invalid ASCII85: lone ~"));
+                return Err(ParseError::Message("invalid ASCII85: lone ~".to_string()));
             }
             b'z' => {
                 // Special case: 'z' represents 4 zero bytes
                 if group_len > 0 {
-                    return Err(ParseError::Message("invalid ASCII85: z mid-group"));
+                    return Err(ParseError::Message(
+                        "invalid ASCII85: z mid-group".to_string(),
+                    ));
                 }
                 output.extend_from_slice(&[0, 0, 0, 0]);
             }
@@ -626,7 +718,7 @@ pub fn decode_ascii85(data: &[u8]) -> ParseResult<Vec<u8>> {
             // Whitespace is ignored
             b' ' | b'\t' | b'\n' | b'\r' => {}
             _ => {
-                return Err(ParseError::Message("invalid ASCII85 character"));
+                return Err(ParseError::Message("invalid ASCII85 character".to_string()));
             }
         }
     }
@@ -668,14 +760,18 @@ pub fn decode_run_length(data: &[u8]) -> ParseResult<Vec<u8>> {
             // Copy next (length + 1) bytes literally
             let count = (length as usize) + 1;
             if i + count > data.len() {
-                return Err(ParseError::Message("RunLength: unexpected end of data"));
+                return Err(ParseError::Message(
+                    "RunLength: unexpected end of data".to_string(),
+                ));
             }
             output.extend_from_slice(&data[i..i + count]);
             i += count;
         } else {
             // Repeat next byte (1 - length) times
             if i >= data.len() {
-                return Err(ParseError::Message("RunLength: unexpected end of data"));
+                return Err(ParseError::Message(
+                    "RunLength: unexpected end of data".to_string(),
+                ));
             }
             let byte = data[i];
             i += 1;

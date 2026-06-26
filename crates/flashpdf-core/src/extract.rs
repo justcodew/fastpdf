@@ -134,6 +134,12 @@ pub struct ExtractResult {
     pub metadata: crate::document::DocumentMetadata,
     /// PDF version string from `%PDF-X.Y` header (e.g. `"1.7"`).
     pub pdf_version: Option<String>,
+    /// True iff the PDF was encrypted with `/Standard` RC4 or AES-128 and
+    /// flashpdf successfully decrypted it (empty user password path).
+    pub is_encrypted: bool,
+    /// True iff the PDF is linearized (`/Linearized 1` in first object,
+    /// PDF spec §F.2). Informational only — extraction is identical.
+    pub is_linearized: bool,
 }
 
 /// Extract text blocks and images from a single PDF file.
@@ -144,6 +150,13 @@ pub fn extract(path: &str, options: &ExtractOptions) -> ParseResult<ExtractResul
 
 /// Extract from an already-opened Document.
 pub fn extract_doc(doc: &Document, options: &ExtractOptions) -> ParseResult<ExtractResult> {
+    let span = tracing::span!(
+        tracing::Level::DEBUG,
+        "extract_doc",
+        page_count_guess = tracing::field::Empty,
+    );
+    let _enter = span.enter();
+    tracing::debug!(version = ?doc.pdf_version(), encrypted = doc.is_encrypted(), "starting extract");
     // Try the spec-compliant /Pages /Kids walk first. If the page tree is
     // broken (dangling /Pages ref, missing /Kids — common in Word/Office
     // exports and bug-regression PDFs), fall back to scanning every xref
@@ -163,6 +176,8 @@ pub fn extract_doc(doc: &Document, options: &ExtractOptions) -> ParseResult<Extr
             pages: Vec::new(),
             metadata: doc.metadata(),
             pdf_version: doc.pdf_version().map(|s| s.to_string()),
+            is_encrypted: doc.is_encrypted(),
+            is_linearized: doc.is_linearized(),
         });
     }
     let batch_size = if options.batch_size > 0 && page_refs.len() > options.batch_size {
@@ -184,6 +199,8 @@ pub fn extract_doc(doc: &Document, options: &ExtractOptions) -> ParseResult<Extr
         pages: all_pages,
         metadata: doc.metadata(),
         pdf_version: doc.pdf_version().map(|s| s.to_string()),
+        is_encrypted: doc.is_encrypted(),
+        is_linearized: doc.is_linearized(),
     })
 }
 
@@ -402,11 +419,14 @@ fn extract_single_page(
         crate::layout::reading_order_sort_with_diagnostics(blocks, rect);
 
     // Cluster rotated chars separately. Each connected run (sidebar, axis
-    // label) becomes its own block. Append at end so body reading order is
-    // preserved — this matches the documented behavior that rotated text
-    // is not woven into the XY-cut output.
+    // label) becomes its own block. Use the transpose-then-cluster path so
+    // 90°/270°-rotated text groups into proper lines instead of one char
+    // per span. Append at end so body reading order is preserved — this
+    // matches the documented behavior that rotated text is not woven into
+    // the XY-cut output.
     if !rot_chars.is_empty() {
-        let mut rot_blocks = cluster_chars(&rot_chars, &font_name, font_size, 0, font_flags);
+        let mut rot_blocks =
+            crate::layout::cluster_rotated_chars(&rot_chars, &font_name, font_size, 0, font_flags);
         blocks.append(&mut rot_blocks);
     }
 

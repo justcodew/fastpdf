@@ -68,7 +68,9 @@ pub fn recover_xref_by_scan(data: &[u8]) -> ParseResult<XrefTable> {
         }
     }
 
-    let root = root.ok_or(ParseError::Message("recovery: could not find Catalog root"))?;
+    let root = root.ok_or(ParseError::Message(
+        "recovery: could not find Catalog root".to_string(),
+    ))?;
 
     let size = entries.keys().max().map_or(0, |&k| k + 1);
 
@@ -78,6 +80,9 @@ pub fn recover_xref_by_scan(data: &[u8]) -> ParseResult<XrefTable> {
         size,
         info: None,
         encrypt: None,
+        encrypt_present: false,
+        trailer_offset: None,
+        id_first: None,
     })
 }
 

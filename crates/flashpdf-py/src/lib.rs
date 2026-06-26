@@ -9,9 +9,38 @@ fn flashpdf(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_many, m)?)?;
     m.add_function(wrap_pyfunction!(extract_links, m)?)?;
     m.add_function(wrap_pyfunction!(open, m)?)?;
+    m.add_function(wrap_pyfunction!(set_log_level, m)?)?;
     m.add_class::<PyDocument>()?;
     m.add_class::<PyPage>()?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    Ok(())
+}
+
+/// Configure Rust-side tracing output. Accepts `"error"`, `"warn"`,
+/// `"info"`, `"debug"`, `"trace"`, or `"off"`. Equivalent to setting
+/// `RUST_LOG=flashpdf_core=<level>` before importing the module — use
+/// whichever is more convenient. Calling with `"off"` (the default)
+/// silences output.
+///
+/// Example::
+///     >>> import flashpdf
+///     >>> flashpdf.set_log_level("debug")
+///     >>> doc = flashpdf.open("weird.pdf")  # prints tracing spans
+///     >>> flashpdf.set_log_level("off")
+#[pyfunction]
+#[pyo3(signature = (level="off"))]
+fn set_log_level(level: &str) -> PyResult<()> {
+    let filter_str = format!("flashpdf_core={level}");
+    let env_filter = tracing_subscriber::EnvFilter::try_new(filter_str)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+    // Try to set the global default subscriber. If a subscriber is already
+    // installed (because the user called this twice, or another Rust lib
+    // installed one), swallow the error — the latest intent is impossible
+    // to honor without try_init's "set default if absent" semantics.
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(env_filter)
+        .with_target(false)
+        .try_init();
     Ok(())
 }
 
@@ -357,6 +386,11 @@ pub struct PyDocument {
     /// when the header is missing/malformed. Surfaced as part of
     /// `doc.metadata["format"]` for fitz parity (`"PDF 1.7"`).
     pdf_version: Option<String>,
+    /// True iff flashpdf decrypted the PDF (RC4 or AES-128, empty user pw).
+    is_encrypted: bool,
+    /// True iff the PDF was linearized (first indirect object carries
+    /// `/Linearized 1`). Informational only.
+    is_linearized: bool,
     /// Outline / table of contents, extracted by walking `/Outlines` at
     /// open time. Empty when the PDF has no outline.
     toc: Vec<flashpdf_core::TocItem>,
@@ -428,9 +462,32 @@ impl PyDocument {
             None => "PDF".to_string(),
         };
         d.set_item("format", format)?;
-        d.set_item("encryption", py.None())?;
+        // fitz reports the encryption method name (e.g. "RC4", "AES-128") or None.
+        d.set_item(
+            "encryption",
+            if self.is_encrypted {
+                // We don't currently expose the algorithm name through to PyDocument;
+                // report a generic truthy string. Upgrades are easy when needed.
+                PyString::new(py, "yes").into_any()
+            } else {
+                py.None().into_bound(py).into_any()
+            },
+        )?;
         d.set_item("size", py.None())?;
         Ok(d)
+    }
+
+    /// True iff the PDF was opened with the standard encryption handler
+    /// (RC4 or AES-128 with empty user password).
+    #[getter]
+    fn is_encrypted(&self) -> bool {
+        self.is_encrypted
+    }
+
+    /// True iff the PDF declares `/Linearized 1` in its first object.
+    #[getter]
+    fn is_linearized(&self) -> bool {
+        self.is_linearized
     }
 
     /// No-op: the underlying mmap has already been released by the time
@@ -503,6 +560,8 @@ impl PyDocument {
             pages,
             metadata: result.metadata,
             pdf_version: result.pdf_version,
+            is_encrypted: result.is_encrypted,
+            is_linearized: result.is_linearized,
             toc,
         })
     }

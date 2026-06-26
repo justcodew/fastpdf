@@ -74,6 +74,13 @@ impl<'a> PdfObject<'a> {
         }
     }
 
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            PdfObject::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
+
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             PdfObject::Real(f) => Some(*f),
