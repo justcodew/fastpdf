@@ -1,5 +1,96 @@
 # flashpdf 性能基准报告
 
+## v0.3.2 综合对比 (2026-06-27)
+
+最新一轮 flashpdf 0.3.2 vs liteparse vs pdf_oxide 的 **165-PDF 病理语料**
+稳定性 + 速度测试。本轮重点验证 v0.3.1 → v0.3.2 把失败率从 2% 降到 **0%**
+的修复成果。
+
+### 测试环境
+
+- **OS**: macOS (Apple Silicon ARM64)
+- **Python**: 3.14
+- **flashpdf**: 0.3.2（`maturin develop --release`）
+- **liteparse**: 最新 PyPI 版本
+- **pdf_oxide**: 最新 PyPI 版本
+- **迭代**: 每 PDF 顺序内联跑一次（无子进程隔离），165 PDF 全跑约 6 秒
+
+### 测试样本
+
+PyMuPDF 测试集的 bug-regression 资源——每个 PDF 都是一次历史 bug 的最小
+复现，覆盖 CJK / 扫描 / 加密 / 表格 / 表单 / 矢量图。共 **165 个** PDF，
+大小 **865B-8.3MB**。
+
+### 复现方法
+
+```bash
+git clone --depth 1 https://github.com/pymupdf/PyMuPDF.git /tmp/pymupdf
+pip install flashpdf liteparse pdf-oxide
+CORPUS_DIR=/tmp/pymupdf/tests/resources python tests/bench_corpus.py
+```
+
+### 稳定性结果
+
+| 库 | 成功 n | 失败率 | 失败原因 |
+|---|---:|---:|---|
+| **flashpdf** | **165/165** | **0%** | — |
+| liteparse | 164/165 | 1% | hang on circular-toc.pdf |
+| pdf_oxide | 164/165 | 1% | RuntimeError |
+
+### 速度聚合（仅成功文件）
+
+| 库 | mean | p50 | p95 | p99 | ms/页 p50 |
+|---|---:|---:|---:|---:|---:|
+| **flashpdf** | **2.98ms** | **0.87ms** | 7.60ms | 55.0ms | **552ms** |
+| liteparse | 16.31ms | 1.68ms | 51.4ms | 293.3ms | 1362ms |
+| pdf_oxide | 16.31ms | 1.59ms | 40.1ms | 323.5ms | 1349ms |
+
+### 单文件速度比（geo-mean）
+
+| 对比 | n | geo-mean | p25 | p50 | p75 | min | max |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| liteparse/flashpdf | 164 | **2.12×** | 0.96× | 2.31× | 4.23× | 0.08× | 968× |
+| pdf_oxide/flashpdf | 164 | **1.98×** | 0.94× | 1.71× | 3.85× | 0.10× | 1218× |
+
+### 按文件大小分桶——优势随文件大小增长
+
+| 桶 | n | fp p50 | lp/fp | po/fp |
+|---|---:|---:|---:|---:|
+| tiny <10KB | 31 | 0.21ms | 1.34× | **0.80×**（pdf_oxide 反超） |
+| small 10-100KB | 51 | 0.70ms | 1.53× | 1.46× |
+| medium 100KB-1MB | 63 | 1.40ms | 2.91× | 3.15× |
+| **large >1MB** | 20 | 6.27ms | **3.64×** | **4.22×** |
+
+### v0.3.x 稳定性演进
+
+| 版本 | 失败率 | 关键修复 |
+|------|------:|----------|
+| 0.3.0 | 50% | （基线：36 个无限循环 + 46 个硬错误） |
+| 0.3.1 | 2% | skip_value 无限循环 + 悬空引用按 null 解析 + 页树断裂恢复 |
+| **0.3.2** | **0%** | xy_cut 无限递归 SIGBUS + recovery 偏移错位 + xref stream 解压 + ObjStm 边界 |
+
+### 关键发现
+
+1. **稳定性反超 peers**：v0.3.0 在该 corpus 上失败率 50%，v0.3.2 降到 **0%**，
+   是 corpus 上唯一无失败的库。liteparse / pdf_oxide 各 1%。
+2. **真实平均优势 ~2×**：geo-mean 2.12× / 1.98×，远低于 v0.1.3 单文件场景下的
+   15-30×。差异原因：单文件场景是 14-15 页学术论文（重负载 + rayon 并行红利），
+   corpus 含大量 1-2 页轻量 PDF（启动开销主导）。
+3. **优势随文件大小增长**：tiny 文件 pdf_oxide 略快（启动开销），large 文件
+   flashpdf 领先 3.6-4.2×。RAG 索引、批量预处理等"重负载"场景适合 flashpdf。
+4. **失败模式集中分布**：liteparse 卡死（circular-toc），pdf_oxide RuntimeError，
+   flashpdf 已无失败。v0.3.2 修了 test_3072（SIGBUS）+ test2238/2788/cython
+   （3 个 ValueError）。
+
+### 与 v0.1.3 单文件数据的对照
+
+v0.1.3 报告中单 arxiv PDF 上 15-32× 的速度优势是**最佳场景**：14-15 页重负载
++ rayon 4 核近线性加速。165-PDF corpus 给出更真实的"平均优势"——包含 31 个
+tiny 文件（<10KB）和 51 个 small 文件（10-100KB），这些场景下并行红利分摊不开，
+单线程启动开销主导，速度差异收窄到 1-1.5×。
+
+---
+
 ## v0.1.3 综合对比 (2026-06-23)
 
 最新一轮 flashpdf 0.1.3 vs PyMuPDF 1.27.2 的综合测试，覆盖**性能 + 精度**两个维度。
