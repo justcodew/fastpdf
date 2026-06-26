@@ -144,11 +144,11 @@ flashpdf toc paper.pdf                        # 打印目录
 
 ### Phase 1 出口标准
 
-- [ ] 1.1-1.5 全部完成且有单元测试
-- [ ] `bench_corpus.py` 失败率仍 0%，速度退化 < 5%（**自动 bench regression check**，见横切关注点）
-- [ ] CHANGELOG v0.4.0 条目
-- [ ] README + ROADMAP 更新
-- [ ] PyPI 发布 + GitHub Release
+- [x] 1.1-1.5 全部完成且有单元测试（77 Rust + 11 CLI 全过）
+- [x] `bench_corpus.py` 失败率仍 0%，速度无回退（v0.4.0 vs v0.3.2）
+- [x] CHANGELOG v0.4.0 条目
+- [x] README + ROADMAP 更新
+- [ ] PyPI 发布 + GitHub Release（手动操作；code-side ready in `main`）
 
 ---
 
