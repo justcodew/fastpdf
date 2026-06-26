@@ -477,9 +477,9 @@ PDF 文件
 
 完整对比（性能 + 精度 + 结构）见 [性能基准报告](docs/BENCHMARK.md)。
 
-### 与 10 个主流 Python PDF 库的对比
+### 与 10 个主流 Python PDF 库的对比（重负载场景）
 
-在两个真实 arxiv 学术 PDF（14-15 页，含 LaTeX 数学公式）上，flashpdf v0.3.0
+在两个真实 arxiv 学术 PDF（14-15 页，含 LaTeX 数学公式）上，flashpdf v0.3.1
 对比 liteparse / pdf_oxide / PyMuPDF / pypdfium2 / pypdf / pdfminer /
 pdfplumber / pdftext / pymupdf4llm / markitdown：
 
@@ -502,12 +502,62 @@ pdfplumber / pdftext / pymupdf4llm / markitdown：
 |                  | pdftext / pdfminer / pdfplumber | 480-1247ms | 57-148x 慢 |
 |                  | pymupdf4llm | 23,405ms | 2773x 慢（OCR 回退） |
 
-**flashpdf 是唯一在真实学术论文上 sub-10ms 完成文本提取的 Python 库**，比次快的
-pypdfium2 / liteparse 快 7-12x，比 pdf_oxide 快 9-14x，比 PyMuPDF 快 13-55x。
+这是 flashpdf 的**最佳场景**——并行 + 零拷贝在重负载 PDF 上红利最大。下方
+165-PDF 多样化语料给出更真实的"平均优势"。
 
 > 注：pdf_oxide README 的 "0.8ms mean" 来自 3,830 个 1-2 页小型 PDF 语料库
 > （veraPDF + Mozilla pdf.js + SafeDocs）的平均值。真实学术论文负载重 10-20 倍。
+
+### 在 165 个多样化 PDF 上的稳定性与速度（v0.3.1）
+
+跑 PyMuPDF 测试集（bug 回归语料，每个 PDF 都是一次历史 bug 的最小复现；
+865B-8.3MB，覆盖 CJK / 扫描 / 加密 / 表格 / 表单 / 矢量图）。每个 lib 顺序内联
+跑一次，无子进程隔离：
+
+**聚合（仅成功文件）**
+
+| 库 | 成功 n | mean | p50 | p95 | p99 | ms/页 p50 |
+|---|---:|---:|---:|---:|---:|---:|
+| **flashpdf** | 161/165 | **1.92ms** | **0.63ms** | 6.08ms | 23.0ms | **579ms** |
+| liteparse | 164/165 | 16.43ms | 1.71ms | 49.82ms | 284.6ms | 1416ms |
+| pdf_oxide | 164/165 | 16.23ms | 1.57ms | 38.52ms | 322.8ms | 1372ms |
+
+**单文件速度比（geo-mean）**
+
+| 对比 | n | geo-mean | p25 | p50 | p75 | min | max |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| liteparse/flashpdf | 160 | **2.78×** | 1.02× | 2.75× | 7.22× | 0.08× | 904× |
+| pdf_oxide/flashpdf | 160 | **2.54×** | 0.82× | 2.16× | 6.52× | 0.09× | 1164× |
+
+**按文件大小分桶——优势随文件大小增长**
+
+| 桶 | n | fp p50 | lp/fp | po/fp |
+|---|---:|---:|---:|---:|
+| tiny <10KB | 31 | 0.25ms | 1.12× | **0.67×**（pdf_oxide 反超） |
+| small 10-100KB | 51 | 0.39ms | 2.35× | 2.16× |
+| medium 100KB-1MB | 63 | 1.24ms | 3.75× | 3.93× |
+| **large >1MB** | 20 | 4.57ms | **6.00×** | **6.90×** |
+
+**失败率已与 peers 平起平坐**
+
+| 库 | 失败数 | 失败率 | 类型 |
+|---|---:|---:|---|
+| flashpdf | 4/165 | 2% | ValueError=3, native crash=1 (test_3072.pdf) |
+| liteparse | 1/165 | 1% | hang on circular-toc.pdf |
+| pdf_oxide | 1/165 | 1% | RuntimeError |
+
+**诚实的结论**
+
+- flashpdf 的**真实平均优势是 2.5-3×**（geo-mean），不是单文件场景下的 5-12×。
+  单文件数据被并行红利放大了——4 核 + 14 页时 rayon 接近线性加速。
+- **优势随文件大小增长**：tiny 文件 pdf_oxide 反超（flashpdf 启动开销分摊不开），
+  large 文件 flashpdf 领先 6-7×。RAG 索引、批量预处理等"重负载"场景适合 flashpdf；
+  小文件批量（发票、邮件附件）pdf_oxide 可能更快。
+- **稳定性**：v0.3.0 在该 corpus 上失败率 50%（36 个无限循环 + 46 个硬错误），
+  v0.3.1 修复后降到 2%，与 peers 同量级。
+
 > 完整方法学、版本号、字符数、p99 见 [基准报告](docs/BENCHMARK.md)。
+> 复现脚本：`python tests/bench_corpus.py`（5.8s 跑完全 165 文件）。
 
 ## 测试
 
@@ -522,9 +572,9 @@ cargo test -p flashpdf-core test_cmap
 cargo bench -p flashpdf-core
 ```
 
-当前测试：**32 个核心单元测试全部通过** ✅（lib 内）+ 集成测试通过
+当前测试：**39 个核心单元测试全部通过** ✅（lib 内）+ 集成测试通过
 
-- lib 单元测试：32 个（对象解析、xref、内容流、布局、字体、recovery）
+- lib 单元测试：39 个（对象解析、xref、内容流、布局、字体、recovery、links）
 - 流解码器 (LZW/ASCII85/RunLength/ASCIIHex)：集成覆盖
 
 ## 依赖
