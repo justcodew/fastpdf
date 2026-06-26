@@ -59,6 +59,9 @@ pub struct PageResult {
     /// about. Populated regardless of `include_rotated` — detection always
     /// runs, output policy is the user's choice via the option flags.
     pub diagnostics: PageDiagnostics,
+    /// Hyperlinks on this page (URI / Goto / Named / Launch / GotoR).
+    /// Empty for pages without `/Annots` or non-Link annotations.
+    pub links: Vec<crate::links::PageLink>,
 }
 
 /// Per-page diagnostics: counts of content that was dropped or potentially
@@ -126,6 +129,11 @@ fn detect_scanned(
 #[derive(Debug)]
 pub struct ExtractResult {
     pub pages: Vec<PageResult>,
+    /// Document-level metadata from `/Info`. Always populated; defaults to
+    /// all-`None` fields when the document has no `/Info` entry.
+    pub metadata: crate::document::DocumentMetadata,
+    /// PDF version string from `%PDF-X.Y` header (e.g. `"1.7"`).
+    pub pdf_version: Option<String>,
 }
 
 /// Extract text blocks and images from a single PDF file.
@@ -151,7 +159,11 @@ pub fn extract_doc(doc: &Document, options: &ExtractOptions) -> ParseResult<Extr
     // Guard against page_refs.len()==0 — both recovery paths can return empty
     // for utterly broken PDFs, and `chunks(0)` panics.
     if page_refs.is_empty() {
-        return Ok(ExtractResult { pages: Vec::new() });
+        return Ok(ExtractResult {
+            pages: Vec::new(),
+            metadata: doc.metadata(),
+            pdf_version: doc.pdf_version().map(|s| s.to_string()),
+        });
     }
     let batch_size = if options.batch_size > 0 && page_refs.len() > options.batch_size {
         options.batch_size
@@ -161,45 +173,61 @@ pub fn extract_doc(doc: &Document, options: &ExtractOptions) -> ParseResult<Extr
 
     let mut all_pages = Vec::with_capacity(page_refs.len());
 
+    let mut batch_start = 0u32;
     for batch in page_refs.chunks(batch_size) {
-        let batch_results = extract_page_batch(doc, batch, mmap_data, options);
+        let batch_results = extract_page_batch(doc, batch, mmap_data, options, batch_start);
+        batch_start = batch_start.saturating_add(batch.len() as u32);
         all_pages.extend(batch_results);
     }
 
-    Ok(ExtractResult { pages: all_pages })
+    Ok(ExtractResult {
+        pages: all_pages,
+        metadata: doc.metadata(),
+        pdf_version: doc.pdf_version().map(|s| s.to_string()),
+    })
 }
 
 /// Extract a batch of pages (used for large document batching).
+/// `batch_start_idx` is the global 0-based index of the first page in this
+/// batch — needed so each PageResult can record its real page number for
+/// link extraction and PyPage.number reporting.
 fn extract_page_batch(
     doc: &Document,
     page_refs: &[crate::types::ObjectId],
     mmap_data: &[u8],
     options: &ExtractOptions,
+    batch_start_idx: u32,
 ) -> Vec<PageResult> {
     if options.page_parallel && page_refs.len() > 1 {
         page_refs
             .par_iter()
-            .map(|r| {
-                extract_single_page(doc, *r, mmap_data, options).unwrap_or_else(|_| PageResult {
-                    blocks: vec![],
-                    images: vec![],
-                    is_scanned: false,
-                    rect: [0.0, 0.0, 612.0, 792.0],
-                    diagnostics: PageDiagnostics::default(),
-                })
+            .enumerate()
+            .map(|(i, r)| {
+                extract_single_page(doc, *r, mmap_data, options, batch_start_idx + i as u32)
+                    .unwrap_or_else(|_| PageResult {
+                        blocks: vec![],
+                        images: vec![],
+                        is_scanned: false,
+                        rect: [0.0, 0.0, 612.0, 792.0],
+                        diagnostics: PageDiagnostics::default(),
+                        links: vec![],
+                    })
             })
             .collect()
     } else {
         page_refs
             .iter()
-            .map(|r| {
-                extract_single_page(doc, *r, mmap_data, options).unwrap_or_else(|_| PageResult {
-                    blocks: vec![],
-                    images: vec![],
-                    is_scanned: false,
-                    rect: [0.0, 0.0, 612.0, 792.0],
-                    diagnostics: PageDiagnostics::default(),
-                })
+            .enumerate()
+            .map(|(i, r)| {
+                extract_single_page(doc, *r, mmap_data, options, batch_start_idx + i as u32)
+                    .unwrap_or_else(|_| PageResult {
+                        blocks: vec![],
+                        images: vec![],
+                        is_scanned: false,
+                        rect: [0.0, 0.0, 612.0, 792.0],
+                        diagnostics: PageDiagnostics::default(),
+                        links: vec![],
+                    })
             })
             .collect()
     }
@@ -297,6 +325,7 @@ fn extract_single_page(
     page_ref: crate::types::ObjectId,
     mmap_data: &[u8],
     options: &ExtractOptions,
+    page_idx: u32,
 ) -> ParseResult<PageResult> {
     let page = doc.get_object(page_ref.num)?;
 
@@ -395,6 +424,10 @@ fn extract_single_page(
     // Detect scanned page (heuristic: little text + large image covering the page)
     let is_scanned = detect_scanned(&blocks, &scan_result.images, &rect);
 
+    // Extract hyperlinks on this page. Errors here are non-fatal — a broken
+    // /Annots array shouldn't sink the whole page's text extraction.
+    let links = crate::links::extract_page_links(doc, &page, page_idx).unwrap_or_default();
+
     // Resolve images if requested
     let images = if options.include_images && !scan_result.images.is_empty() {
         if let Some(ref resources) = resources {
@@ -414,6 +447,7 @@ fn extract_single_page(
         is_scanned,
         rect,
         diagnostics,
+        links,
     })
 }
 

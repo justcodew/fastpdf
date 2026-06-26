@@ -122,14 +122,75 @@ fn extract_links<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyList
 
     let output = PyList::empty(py);
     for link in &links {
-        let dict = PyDict::new(py);
-        dict.set_item("uri", &link.uri)?;
-        dict.set_item("bbox", link.bbox.to_vec())?;
-        dict.set_item("page", link.page)?;
-        output.append(dict)?;
+        output.append(link_to_dict(py, link)?)?;
     }
 
     Ok(output)
+}
+
+/// Map a Rust `PageLink` to a fitz-style Python dict. Used by both
+/// `extract_links` (the standalone function) and `Page.get_links()`.
+fn link_to_dict<'py>(
+    py: Python<'py>,
+    link: &flashpdf_core::PageLink,
+) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new(py);
+    let kind_str = match link.kind {
+        flashpdf_core::LinkKind::Uri => "uri",
+        flashpdf_core::LinkKind::Goto => "goto",
+        flashpdf_core::LinkKind::Named => "named",
+        flashpdf_core::LinkKind::Launch => "launch",
+        flashpdf_core::LinkKind::GotoR => "gotor",
+    };
+    d.set_item("kind", kind_str)?;
+    // fitz uses `from` for the link's bbox.
+    d.set_item("from", link.bbox.to_vec())?;
+    // Also expose as `bbox` for users who don't recognize the fitz name.
+    d.set_item("bbox", link.bbox.to_vec())?;
+    d.set_item("page", link.page)?;
+
+    // Kind-specific fields. fitz puts these on the same dict, with `None`
+    // for inapplicable ones — we mirror that so callers can write
+    // `link["uri"]` without checking the kind first.
+    d.set_item("uri", opt_str_to_py(py, &link.uri))?;
+    d.set_item(
+        "to",
+        match link.to_page {
+            Some(p) => p.into_pyobject(py)?.into_any(),
+            None => py.None().into_bound(py).into_any(),
+        },
+    )?;
+    d.set_item(
+        "to_point",
+        match link.to_point {
+            Some([x, y]) => {
+                let arr = PyList::empty(py);
+                arr.append(x)?;
+                arr.append(y)?;
+                arr.into_any()
+            }
+            None => py.None().into_bound(py).into_any(),
+        },
+    )?;
+    d.set_item("name", opt_str_to_py(py, &link.name))?;
+    d.set_item("file", opt_str_to_py(py, &link.file))?;
+    d.set_item(
+        "remote_page",
+        match link.remote_page {
+            Some(p) => p.into_pyobject(py)?.into_any(),
+            None => py.None().into_bound(py).into_any(),
+        },
+    )?;
+    Ok(d)
+}
+
+/// Map `Option<&str>` (treating empty as None) to a Python str or None.
+fn opt_str_to_py<'py>(py: Python<'py>, s: &str) -> Bound<'py, PyAny> {
+    if s.is_empty() {
+        py.None().into_bound(py)
+    } else {
+        pyo3::types::PyString::new(py, s).into_any()
+    }
 }
 
 /// Render an ExtractResult into a Python list of [blocks, images] or
@@ -232,6 +293,11 @@ fn render_extract_result<'py>(
 #[pyclass(name = "Document")]
 pub struct PyDocument {
     pages: Vec<Arc<flashpdf_core::PageResult>>,
+    metadata: flashpdf_core::DocumentMetadata,
+    /// PDF version string from `%PDF-X.Y` header (e.g. `"1.7"`), or `None`
+    /// when the header is missing/malformed. Surfaced as part of
+    /// `doc.metadata["format"]` for fitz parity (`"PDF 1.7"`).
+    pdf_version: Option<String>,
 }
 
 #[pymethods]
@@ -277,6 +343,34 @@ impl PyDocument {
         self.pages.len()
     }
 
+    /// Document metadata (fitz-compatible dict). Always returns the same
+    /// key set as PyMuPDF: `title`, `author`, `subject`, `keywords`,
+    /// `creator`, `producer`, `creationDate`, `modDate`, `format`,
+    /// `encryption`, `size`. Missing fields are `None`.
+    #[getter]
+    fn metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new(py);
+        let m = &self.metadata;
+        d.set_item("title", opt_to_py(py, &m.title))?;
+        d.set_item("author", opt_to_py(py, &m.author))?;
+        d.set_item("subject", opt_to_py(py, &m.subject))?;
+        d.set_item("keywords", opt_to_py(py, &m.keywords))?;
+        d.set_item("creator", opt_to_py(py, &m.creator))?;
+        d.set_item("producer", opt_to_py(py, &m.producer))?;
+        d.set_item("creationDate", opt_to_py(py, &m.creation_date))?;
+        d.set_item("modDate", opt_to_py(py, &m.mod_date))?;
+        // fitz reports the file format and encryption state — we expose the
+        // same keys for API parity. flashpdf is read-only so these are static.
+        let format = match &self.pdf_version {
+            Some(v) => format!("PDF {}", v),
+            None => "PDF".to_string(),
+        };
+        d.set_item("format", format)?;
+        d.set_item("encryption", py.None())?;
+        d.set_item("size", py.None())?;
+        Ok(d)
+    }
+
     /// No-op: the underlying mmap has already been released by the time
     /// `open()` returns. Provided for fitz API parity (`doc.close()`).
     fn close(&self) {}
@@ -308,7 +402,21 @@ impl PyDocument {
         let result = flashpdf_core::extract(path, &opts)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         let pages = result.pages.into_iter().map(Arc::new).collect();
-        Ok(Self { pages })
+
+        Ok(Self {
+            pages,
+            metadata: result.metadata,
+            pdf_version: result.pdf_version,
+        })
+    }
+}
+
+/// Map an `Option<String>` to `Option<&str>` → PyObject without consuming
+/// the inner String, so `metadata` can be read repeatedly across `getters`.
+fn opt_to_py<'py>(py: Python<'py>, s: &Option<String>) -> Bound<'py, PyAny> {
+    match s {
+        Some(v) => pyo3::types::PyString::new(py, v).into_any(),
+        None => py.None().into_bound(py),
     }
 }
 
@@ -347,6 +455,18 @@ impl PyPage {
         let list = PyList::empty(py);
         for img in &self.page.images {
             list.append(self.image_to_dict(py, img)?)?;
+        }
+        Ok(list)
+    }
+
+    /// fitz-compatible link list. Each link is a dict with `kind` (`"uri"` /
+    /// `"goto"` / `"named"` / `"launch"` / `"gotor"`), `from` (bbox), `page`
+    /// (the page hosting the link), and kind-specific fields: `uri`, `to`
+    /// (target page index), `to_point`, `name`, `file`, `remote_page`.
+    fn get_links<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
+        let list = PyList::empty(py);
+        for link in &self.page.links {
+            list.append(link_to_dict(py, link)?)?;
         }
         Ok(list)
     }
