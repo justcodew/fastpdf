@@ -12,6 +12,10 @@ flate2 = "1"
 memmap2 = "0.9"
 rayon = "1"
 crc32fast = "1"
+md-5 = "0.10"
+aes = "0.8"
+cbc = "0.1"
+sha2 = "0.10"
 zune-png = { version = "0.4", optional = true }
 
 [dev-dependencies]

@@ -17,8 +17,36 @@ pub enum ParseError {
     UnbalancedString,
     /// Stream missing required /Length
     StreamMissingLength,
-    /// Generic message
-    Message(&'static str),
+    /// Generic message — used for encryption errors and other context-rich
+    /// failures that don't fit a fixed variant. Owns its bytes so callers can
+    /// build dynamic messages (object numbers, byte offsets, etc.).
+    Message(String),
+    /// An inner error annotated with the byte offset at which it occurred and
+    /// up to 32 bytes of surrounding context. Used by the object/xref layers
+    /// to surface *where* a parse failed, not just *what*. The Display impl
+    /// formats this as `error at byte N: <inner>\n  context: <bytes>`.
+    At {
+        inner: Box<ParseError>,
+        offset: usize,
+        context: Vec<u8>,
+    },
+}
+
+impl ParseError {
+    /// Wrap this error with a byte offset and surrounding context. The
+    /// context is truncated to 32 bytes around `offset` to keep messages
+    /// readable. Cheap to call on the hot path — only allocates when the
+    /// error path is actually taken.
+    pub fn at(self, offset: usize, full_data: &[u8]) -> Self {
+        let start = offset.saturating_sub(16);
+        let end = (offset + 16).min(full_data.len());
+        let context = full_data[start..end].to_vec();
+        ParseError::At {
+            inner: Box::new(self),
+            offset,
+            context,
+        }
+    }
 }
 
 impl std::fmt::Display for ParseError {
@@ -34,6 +62,30 @@ impl std::fmt::Display for ParseError {
             ParseError::UnbalancedString => write!(f, "unbalanced parentheses in string"),
             ParseError::StreamMissingLength => write!(f, "stream missing /Length"),
             ParseError::Message(m) => write!(f, "{}", m),
+            ParseError::At {
+                inner,
+                offset,
+                context,
+            } => {
+                // Escape control bytes for human-readable context. PDFs often
+                // contain binary in streams; we don't want newlines/binary
+                // mid-error-message.
+                let escaped: String = context
+                    .iter()
+                    .map(|&b| match b {
+                        b'\n' => "\\n".into(),
+                        b'\r' => "\\r".into(),
+                        b'\t' => "\\t".into(),
+                        0x20..=0x7E => (b as char).to_string(),
+                        _ => format!("\\x{:02x}", b),
+                    })
+                    .collect();
+                write!(
+                    f,
+                    "error at byte {}: {}\n  context: \"{}\"",
+                    offset, inner, escaped
+                )
+            }
         }
     }
 }
@@ -524,7 +576,7 @@ pub fn parse_stream<'a>(
 
     // Expect "stream" keyword
     if !cur.remaining().starts_with(b"stream") {
-        return Err(ParseError::Message("expected 'stream' keyword"));
+        return Err(ParseError::Message("expected 'stream' keyword".to_string()));
     }
     cur.advance(6);
 

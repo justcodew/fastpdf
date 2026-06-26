@@ -159,14 +159,19 @@ pub struct Document {
     object_cache: RwLock<HashMap<u32, PdfObject<'static>>>,
     /// Cache of decompressed object streams
     objstm_cache: RwLock<HashMap<u32, HashMap<u32, PdfObject<'static>>>>,
+    /// Compiled decryption state, present iff the PDF has a `/Standard`
+    /// security handler we know how to decrypt (RC4 or AES-128 with empty
+    /// user password). `None` for unencrypted PDFs and unsupported schemes.
+    decryptor: Option<crate::crypto::Decryptor>,
 }
 
 impl Document {
     /// Open and parse a PDF file.
     pub fn open<P: AsRef<Path>>(path: P) -> ParseResult<Self> {
-        let file = File::open(path).map_err(|_| ParseError::Message("cannot open file"))?;
-        let mmap =
-            unsafe { Mmap::map(&file) }.map_err(|_| ParseError::Message("cannot mmap file"))?;
+        let file =
+            File::open(path).map_err(|_| ParseError::Message("cannot open file".to_string()))?;
+        let mmap = unsafe { Mmap::map(&file) }
+            .map_err(|_| ParseError::Message("cannot mmap file".to_string()))?;
         Self::from_mmap(mmap)
     }
 
@@ -177,7 +182,7 @@ impl Document {
         // Try standard xref parsing first; fall back to memchr recovery
         let xref = match find_startxref(data) {
             Ok(xref_offset) => Self::parse_xref_at(data, xref_offset),
-            Err(_) => Err(ParseError::Message("startxref not found")),
+            Err(_) => Err(ParseError::Message("startxref not found".to_string())),
         };
 
         // Validate: if the declared xref root doesn't actually point at a
@@ -191,16 +196,46 @@ impl Document {
             _ => recover_xref_by_scan(data)?,
         };
 
-        // Check for encryption
-        if xref.encrypt.is_some() {
-            return Err(ParseError::Message("encrypted PDFs are not supported"));
-        }
+        // Set up decryption if `/Encrypt` is present. Two forms:
+        //   (a) `/Encrypt N 0 R` — indirect ref, look up + parse the object.
+        //   (b) `/Encrypt<<...>>` — inline dict in the trailer (fitz and some
+        //       Acrobat versions emit this). We re-parse the trailer at the
+        //       recorded offset to read the inline dict.
+        // Unsupported schemes (non-Standard handler, AES-256, non-empty
+        // password) return an error so callers can surface it; PDFs without
+        // `/Encrypt` skip this entirely.
+        let decryptor = if xref.encrypt.is_some() {
+            let encrypt_id = xref.encrypt.unwrap();
+            let entry = xref.entries.get(&encrypt_id.num).ok_or_else(|| {
+                ParseError::Message("encrypt dict ref not in xref".to_string())
+            })?;
+            let offset = entry.field1 as usize;
+            // Parse /Encrypt dict directly from raw bytes — do NOT route
+            // through Document::get_object (no Document yet) and do NOT
+            // try to decrypt it (its strings are ciphertext by definition).
+            let encrypt_dict_raw = parse_object_at(data, offset, encrypt_id.gen)?;
+            let doc_id = xref.id_first.as_deref().unwrap_or(&[]);
+            Some(crate::crypto::Decryptor::from_encrypt_dict(
+                &encrypt_dict_raw,
+                doc_id,
+            )?)
+        } else if xref.encrypt_present {
+            // Inline /Encrypt dict case. Re-walk the trailer starting at the
+            // recorded offset to find the dict, then pull /Encrypt out of it.
+            let inline =
+                parse_inline_encrypt_from_trailer(data, xref.trailer_offset)?;
+            let doc_id = xref.id_first.as_deref().unwrap_or(&[]);
+            Some(crate::crypto::Decryptor::from_encrypt_dict(&inline, doc_id)?)
+        } else {
+            None
+        };
 
         Ok(Self {
             mmap,
             xref,
             object_cache: RwLock::new(HashMap::new()),
             objstm_cache: RwLock::new(HashMap::new()),
+            decryptor,
         })
     }
 
@@ -311,7 +346,18 @@ impl Document {
                 let offset = entry.field1 as usize;
                 let gen = entry.field2;
                 let data: &[u8] = &self.mmap;
-                parse_object_at(data, offset, gen)?
+                let parsed = parse_object_at(data, offset, gen)?;
+                // Decrypt strings + stream body using the per-object key.
+                // ObjStm-resident objects skip this (their bytes were already
+                // decrypted once when the ObjStm stream was loaded).
+                if let Some(dec) = &self.decryptor {
+                    crate::crypto::decrypt_pdf_object(parsed, dec, obj_num, gen)
+                } else {
+                    // safety: parsed borrows from self.mmap which outlives the
+                    // cache; this matches the long-standing leak_pdf_object
+                    // transmute pattern used elsewhere in this file.
+                    unsafe { std::mem::transmute::<PdfObject<'_>, PdfObject<'static>>(parsed) }
+                }
             }
             XrefEntryType::Compressed => {
                 let stream_obj_num = entry.field1;
@@ -365,15 +411,27 @@ impl Document {
         let entry = self
             .xref
             .get(stream_obj_num)
-            .ok_or(ParseError::Message("ObjStm not in xref"))?;
+            .ok_or(ParseError::Message("ObjStm not in xref".to_string()))?;
 
         if entry.entry_type != XrefEntryType::Uncompressed {
-            return Err(ParseError::Message("ObjStm must be uncompressed"));
+            return Err(ParseError::Message(
+                "ObjStm must be uncompressed".to_string(),
+            ));
         }
 
         let offset = entry.field1 as usize;
+        let gen = entry.field2;
         let data: &[u8] = &self.mmap;
         let (dict, raw_stream_data) = parse_object_stream_raw(data, offset)?;
+
+        // Decrypt the ObjStm stream body using the ObjStm's own object key
+        // BEFORE decompression. Per spec, objects inside the ObjStm are then
+        // plaintext — they are NOT re-encrypted, so no per-object decryption
+        // is applied to the parsed entries.
+        let raw_stream_data: Vec<u8> = match &self.decryptor {
+            Some(dec) => dec.decrypt_object(stream_obj_num, gen, raw_stream_data),
+            None => raw_stream_data.to_vec(),
+        };
 
         // Decompress based on /Filter
         let filter = dict
@@ -381,8 +439,8 @@ impl Document {
             .find(|(k, _)| *k == b"Filter")
             .map(|(_, v)| v.clone());
         let stream_data: Vec<u8> = match filter {
-            Some(f) => decompress_stream(raw_stream_data, &f)?,
-            None => raw_stream_data.to_vec(),
+            Some(f) => decompress_stream(&raw_stream_data, &f)?,
+            None => raw_stream_data,
         };
 
         // Leak the stream data to get 'static lifetime.
@@ -408,16 +466,18 @@ impl Document {
         let root = self.root()?;
         let pages_ref = root
             .get(b"Pages")
-            .ok_or(ParseError::Message("missing /Pages in catalog"))?
+            .ok_or(ParseError::Message("missing /Pages in catalog".to_string()))?
             .as_ref()
-            .ok_or(ParseError::Message("/Pages must be a reference"))?;
+            .ok_or(ParseError::Message(
+                "/Pages must be a reference".to_string(),
+            ))?;
 
         let pages = self.get_object(pages_ref.num)?;
         pages
             .get(b"Count")
             .and_then(|c| c.as_i64())
             .map(|n| n as u32)
-            .ok_or(ParseError::Message("missing /Count in Pages"))
+            .ok_or(ParseError::Message("missing /Count in Pages".to_string()))
     }
 
     /// Iterate over page object references.
@@ -425,16 +485,18 @@ impl Document {
         let root = self.root()?;
         let pages_ref = root
             .get(b"Pages")
-            .ok_or(ParseError::Message("missing /Pages in catalog"))?
+            .ok_or(ParseError::Message("missing /Pages in catalog".to_string()))?
             .as_ref()
-            .ok_or(ParseError::Message("/Pages must be a reference"))?;
+            .ok_or(ParseError::Message(
+                "/Pages must be a reference".to_string(),
+            ))?;
 
         let pages = self.get_object(pages_ref.num)?;
         let kids = pages
             .get(b"Kids")
-            .ok_or(ParseError::Message("missing /Kids in Pages"))?
+            .ok_or(ParseError::Message("missing /Kids in Pages".to_string()))?
             .as_array()
-            .ok_or(ParseError::Message("/Kids must be an array"))?;
+            .ok_or(ParseError::Message("/Kids must be an array".to_string()))?;
 
         let mut page_refs = Vec::new();
         collect_page_refs(self, kids, &mut page_refs)?;
@@ -496,6 +558,48 @@ impl Document {
         &self.xref
     }
 
+    /// True iff the PDF has a `/Standard` encryption handler that flashpdf
+    /// successfully opened (with the empty user password). False for plaintext
+    /// PDFs. PDFs with non-Standard handlers or non-empty passwords failed at
+    /// `open()` and never reach this accessor.
+    pub fn is_encrypted(&self) -> bool {
+        self.decryptor.is_some()
+    }
+
+    /// True iff the first indirect object in the file declares `/Linearized 1`
+    /// (PDF spec §F.2). Linearized PDFs are optimized for first-page-fast web
+    /// delivery; the flag is informational — flashpdf extracts the full
+    /// document the same way regardless. Detecting the flag lets callers
+    /// report it and skip work that would otherwise look for hints.
+    pub fn is_linearized(&self) -> bool {
+        // The linearization dict is always object 1 (or the first object in
+        // file order) per spec §F.2. Look at the first non-free entry with the
+        // lowest byte offset — that's where the linearization dict lives if
+        // present.
+        let mut first_obj: Option<(u32, usize)> = None;
+        for (&num, entry) in self.xref.entries.iter() {
+            if entry.entry_type != XrefEntryType::Uncompressed {
+                continue;
+            }
+            let off = entry.field1 as usize;
+            match first_obj {
+                None => first_obj = Some((num, off)),
+                Some((_, best_off)) if off < best_off => first_obj = Some((num, off)),
+                _ => {}
+            }
+        }
+        let Some((num, _)) = first_obj else {
+            return false;
+        };
+        let Ok(obj) = self.get_object(num) else {
+            return false;
+        };
+        obj.get(b"Linearized")
+            .and_then(|v| v.as_i64())
+            .map(|n| n == 1)
+            .unwrap_or(false)
+    }
+
     /// Get a reference to the underlying mmap data.
     pub fn mmap_slice(&self) -> &[u8] {
         &self.mmap
@@ -523,7 +627,7 @@ fn collect_page_refs(
     for kid in kids {
         let kid_ref = kid
             .as_ref()
-            .ok_or(ParseError::Message("Kid must be a reference"))?;
+            .ok_or(ParseError::Message("Kid must be a reference".to_string()))?;
         let kid_obj = doc.get_object(kid_ref.num)?;
         let type_name = kid_obj
             .get(b"Type")
@@ -536,9 +640,9 @@ fn collect_page_refs(
             // Intermediate node, recurse
             let sub_kids = kid_obj
                 .get(b"Kids")
-                .ok_or(ParseError::Message("Pages node missing /Kids"))?
+                .ok_or(ParseError::Message("Pages node missing /Kids".to_string()))?
                 .as_array()
-                .ok_or(ParseError::Message("/Kids must be an array"))?;
+                .ok_or(ParseError::Message("/Kids must be an array".to_string()))?;
             collect_page_refs(doc, sub_kids, refs)?;
         }
     }
@@ -562,19 +666,25 @@ fn parse_object_at(
 
     // Parse object header: N G obj
     cur.skip_ws();
-    let _obj_num = crate::parser::xref::parse_positive_int_from_cursor(&mut cur)? as u32;
+    let _obj_num =
+        crate::parser::xref::parse_positive_int_from_cursor(&mut cur).map_err(|e| {
+            e.at(offset, data)
+        })? as u32;
     cur.skip_ws();
-    let _gen = crate::parser::xref::parse_positive_int_from_cursor(&mut cur)? as u16;
+    let _gen = crate::parser::xref::parse_positive_int_from_cursor(&mut cur).map_err(|e| {
+        e.at(offset, data)
+    })? as u16;
     cur.skip_ws();
 
     // Expect "obj"
     if !cur.remaining().starts_with(b"obj") {
-        return Err(ParseError::Message("expected 'obj' keyword"));
+        return Err(ParseError::Message("expected 'obj' keyword".to_string())
+            .at(offset, data));
     }
     cur.advance(3);
 
     // Parse the object value
-    let obj = parse_object(&mut cur)?;
+    let obj = parse_object(&mut cur).map_err(|e| e.at(offset, data))?;
 
     // If it's a dict followed by "stream", parse as stream
     let result = match &obj {
@@ -597,6 +707,48 @@ fn parse_object_at(
     leak_pdf_object(result)
 }
 
+/// Re-parse the trailer at `trailer_offset` to extract an inline `/Encrypt`
+/// dict. Used when the trailer has `/Encrypt<<...>>` (fitz/Acrobat form) rather
+/// than `/Encrypt N 0 R` (spec-recommended indirect ref). The trailer_offset
+/// points at the start of the xref table or xref-stream object — we scan
+/// forward for the "trailer" keyword, parse the dict that follows, and pull
+/// out `/Encrypt`. Returns an error if /Encrypt is missing or not a dict.
+fn parse_inline_encrypt_from_trailer(
+    data: &[u8],
+    trailer_offset: Option<usize>,
+) -> ParseResult<PdfObject<'static>> {
+    let start = trailer_offset.ok_or(ParseError::Message(
+        "inline /Encrypt dict but no trailer offset".to_string(),
+    ))?;
+    // Find "trailer" keyword from the offset. For xref streams there's no
+    // "trailer" keyword — the stream dict IS the trailer. We don't currently
+    // record that path's dict, so this helper handles only the standard xref
+    // table case. (xref streams almost always use indirect /Encrypt refs.)
+    let window = &data[start..];
+    let trailer_pos = memchr::memmem::find(window, b"trailer").ok_or(ParseError::Message(
+        "trailer keyword not found for inline /Encrypt re-parse".to_string(),
+    ))?;
+    let mut cur = Cursor::new(&window[trailer_pos + b"trailer".len()..]);
+    cur.skip_ws();
+    let dict_obj = parse_object(&mut cur)?;
+    let dict = dict_obj.as_dict().ok_or(ParseError::Message(
+        "trailer is not a dictionary".to_string(),
+    ))?;
+    let encrypt_val = dict
+        .iter()
+        .find(|(k, _)| *k == b"Encrypt")
+        .map(|(_, v)| v)
+        .ok_or(ParseError::Message(
+            "/Encrypt not present after encrypt_present flag".to_string(),
+        ))?;
+    match encrypt_val {
+        PdfObject::Dict(_) => leak_pdf_object(encrypt_val.clone()),
+        _ => Err(ParseError::Message(
+            "/Encrypt is not an inline dictionary".to_string(),
+        )),
+    }
+}
+
 /// Parse a raw stream object at a specific offset (for ObjStm).
 fn parse_object_stream_raw<'a>(
     data: &'a [u8],
@@ -612,7 +764,7 @@ fn parse_object_stream_raw<'a>(
     cur.skip_ws();
 
     if !cur.remaining().starts_with(b"obj") {
-        return Err(ParseError::Message("expected 'obj' keyword"));
+        return Err(ParseError::Message("expected 'obj' keyword".to_string()));
     }
     cur.advance(3);
 
@@ -624,13 +776,15 @@ fn parse_object_stream_raw<'a>(
                 let stream_obj = parse_stream(&mut cur, dict)?;
                 match stream_obj {
                     PdfObject::Stream { dict: d, data: sd } => Ok((d, sd)),
-                    _ => Err(ParseError::Message("expected stream")),
+                    _ => Err(ParseError::Message("expected stream".to_string())),
                 }
             } else {
-                Err(ParseError::Message("expected stream after dict"))
+                Err(ParseError::Message(
+                    "expected stream after dict".to_string(),
+                ))
             }
         }
-        _ => Err(ParseError::Message("expected dict for ObjStm")),
+        _ => Err(ParseError::Message("expected dict for ObjStm".to_string())),
     }
 }
 

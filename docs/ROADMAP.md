@@ -258,11 +258,11 @@ flashpdf toc paper.pdf                        # 打印目录
 
 ### Phase 2 出口标准
 
-- [ ] 加密 PDF 支持 2.1a + 2.1b（2.1c 视抽样结果决定）
-- [ ] Linearized PDF 至少 fast-path 跑通
-- [ ] 错误信息带 offset
-- [ ] 4 个 examples 可跑
-- [ ] 迁移指南
+- [x] 加密 PDF 支持 2.1a + 2.1b（2.1c 视抽样结果决定）
+- [x] Linearized PDF 至少 fast-path 跑通
+- [x] 错误信息带 offset
+- [x] 4 个 examples 可跑
+- [x] 迁移指南
 - [ ] corpus 失败率 ≤ 1%（加入加密文件后允许少量硬失败）
 - [ ] PyPI 发布
 

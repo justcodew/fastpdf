@@ -9,6 +9,7 @@
     clippy::needless_return
 )]
 
+pub mod crypto;
 pub mod document;
 pub mod extract;
 pub mod font;

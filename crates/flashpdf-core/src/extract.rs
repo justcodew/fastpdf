@@ -134,6 +134,12 @@ pub struct ExtractResult {
     pub metadata: crate::document::DocumentMetadata,
     /// PDF version string from `%PDF-X.Y` header (e.g. `"1.7"`).
     pub pdf_version: Option<String>,
+    /// True iff the PDF was encrypted with `/Standard` RC4 or AES-128 and
+    /// flashpdf successfully decrypted it (empty user password path).
+    pub is_encrypted: bool,
+    /// True iff the PDF is linearized (`/Linearized 1` in first object,
+    /// PDF spec §F.2). Informational only — extraction is identical.
+    pub is_linearized: bool,
 }
 
 /// Extract text blocks and images from a single PDF file.
@@ -163,6 +169,8 @@ pub fn extract_doc(doc: &Document, options: &ExtractOptions) -> ParseResult<Extr
             pages: Vec::new(),
             metadata: doc.metadata(),
             pdf_version: doc.pdf_version().map(|s| s.to_string()),
+            is_encrypted: doc.is_encrypted(),
+            is_linearized: doc.is_linearized(),
         });
     }
     let batch_size = if options.batch_size > 0 && page_refs.len() > options.batch_size {
@@ -184,6 +192,8 @@ pub fn extract_doc(doc: &Document, options: &ExtractOptions) -> ParseResult<Extr
         pages: all_pages,
         metadata: doc.metadata(),
         pdf_version: doc.pdf_version().map(|s| s.to_string()),
+        is_encrypted: doc.is_encrypted(),
+        is_linearized: doc.is_linearized(),
     })
 }
 

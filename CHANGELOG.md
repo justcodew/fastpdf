@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.5.0] - 2026-06-27
+
+Phase 2 完成 —— 加密 / Linearized / 错误信息 / 示例 / 迁移指南。向后兼容 0.4.x。
+
+### Added
+
+- **加密 PDF 解密** (2.1)：透明解密 `/Standard` 安全 handler 的 RC4
+  （V1/V2, R=2/3）和 AES-128-CBC（V4, R=4），覆盖"加密但可读"PDF 的
+  绝大多数场景（浏览器导出、扫描件加权限锁等）。空用户密码快速路径
+  在 `open()` 时构建 `Decryptor`，per-object key 派生按 PDF spec §7.6.2
+  使用 `file_key || low-3-bytes(obj_num) || low-2-bytes(obj_gen)`。
+  AES-256 (V5/R6) 和非 `/Standard` handler 返回清晰错误而非静默失败。
+  `doc.is_encrypted` 暴露解密状态。
+
+- **Linearized PDF 检测** (2.2)：`doc.is_linearized` 检查首对象
+  `/Linearized 1`（PDF spec §F.2）。信息性 API，提取路径与普通 PDF
+  完全一致。
+
+- **结构化错误** (2.3)：`ParseError` 新增 `At { inner, offset, context }`
+  变体，在 `parse_object_at` 等关键路径附加字节偏移和 ±16 字节上下文。
+  Display 输出形如 `error at byte 12345: expected 'obj' keyword\n
+  context: "..."`。`Message` 变体的 `String` 升级（v0.4.x 已完成）
+  支持动态错误文案。
+
+- **examples/** (2.4)：
+  - `rag_index.py` — 批量 PDF → NDJSON（per-page text + metadata）
+  - `markdown_export.py` — dict → GFM Markdown（font-size 启发式标题）
+  - `ocr_bridge.py` — 扫描页 → Tesseract
+  - `toc_to_yaml.py` — `get_toc()` → YAML
+
+- **`docs/MIGRATION_FROM_FITZ.md`** (2.5)：API 对照表 + 输出字段差异
+  （flags=0 stub / ascender / 等）+ 加密 / 渲染 / 注解 的 fallback 建议。
+
 ## [0.4.0] - 2026-06-27
 
 Phase 1 完成 —— fitz 功能补全。新增 5 个 API 表面，向后兼容 0.3.x。

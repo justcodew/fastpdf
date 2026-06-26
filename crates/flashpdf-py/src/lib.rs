@@ -357,6 +357,11 @@ pub struct PyDocument {
     /// when the header is missing/malformed. Surfaced as part of
     /// `doc.metadata["format"]` for fitz parity (`"PDF 1.7"`).
     pdf_version: Option<String>,
+    /// True iff flashpdf decrypted the PDF (RC4 or AES-128, empty user pw).
+    is_encrypted: bool,
+    /// True iff the PDF was linearized (first indirect object carries
+    /// `/Linearized 1`). Informational only.
+    is_linearized: bool,
     /// Outline / table of contents, extracted by walking `/Outlines` at
     /// open time. Empty when the PDF has no outline.
     toc: Vec<flashpdf_core::TocItem>,
@@ -428,9 +433,32 @@ impl PyDocument {
             None => "PDF".to_string(),
         };
         d.set_item("format", format)?;
-        d.set_item("encryption", py.None())?;
+        // fitz reports the encryption method name (e.g. "RC4", "AES-128") or None.
+        d.set_item(
+            "encryption",
+            if self.is_encrypted {
+                // We don't currently expose the algorithm name through to PyDocument;
+                // report a generic truthy string. Upgrades are easy when needed.
+                PyString::new(py, "yes").into_any()
+            } else {
+                py.None().into_bound(py).into_any()
+            },
+        )?;
         d.set_item("size", py.None())?;
         Ok(d)
+    }
+
+    /// True iff the PDF was opened with the standard encryption handler
+    /// (RC4 or AES-128 with empty user password).
+    #[getter]
+    fn is_encrypted(&self) -> bool {
+        self.is_encrypted
+    }
+
+    /// True iff the PDF declares `/Linearized 1` in its first object.
+    #[getter]
+    fn is_linearized(&self) -> bool {
+        self.is_linearized
     }
 
     /// No-op: the underlying mmap has already been released by the time
@@ -503,6 +531,8 @@ impl PyDocument {
             pages,
             metadata: result.metadata,
             pdf_version: result.pdf_version,
+            is_encrypted: result.is_encrypted,
+            is_linearized: result.is_linearized,
             toc,
         })
     }
