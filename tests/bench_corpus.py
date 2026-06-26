@@ -24,11 +24,20 @@ import statistics
 import time
 from pathlib import Path
 
+import os
+
 import flashpdf
 import liteparse
 from pdf_oxide import PdfDocument
 
-CORPUS = Path("/Users/xiongzhaolong/Downloads/PyMuPDF-main/tests/resources")
+# 语料来源：PyMuPDF 测试集的 bug-regression 资源（每个 PDF 都是一次历史
+# bug 的最小复现）。clone PyMuPDF 后取 tests/resources 目录：
+#   git clone --depth 1 https://github.com/pymupdf/PyMuPDF.git
+#   CORPUS_DIR=/path/to/PyMuPDF/tests/resources python tests/bench_corpus.py
+# 默认 ~/Downloads/PyMuPDF-main/tests/resources 是维护者本地路径，他人可
+# 通过 CORPUS_DIR 环境变量覆盖。
+_DEFAULT = Path.home() / "Downloads/PyMuPDF-main/tests/resources"
+CORPUS = Path(os.environ.get("CORPUS_DIR", _DEFAULT))
 
 # liteparse verified to hang indefinitely on this file (its own bug, not
 # flashpdf's). Skip to keep the bench script responsive.
@@ -139,6 +148,12 @@ def print_summary(s: dict) -> None:
 # ---- main -------------------------------------------------------------------
 def main() -> None:
     pdfs = sorted(CORPUS.glob("*.pdf"))
+    if not pdfs:
+        print(f"ERROR: 在 {CORPUS} 找不到任何 PDF。")
+        print("复现方法：clone PyMuPDF 测试集后用 CORPUS_DIR 指向其 tests/resources：")
+        print("  git clone --depth 1 https://github.com/pymupdf/PyMuPDF.git /tmp/pymupdf")
+        print("  CORPUS_DIR=/tmp/pymupdf/tests/resources python tests/bench_corpus.py")
+        raise SystemExit(1)
     total_bytes = sum(p.stat().st_size for p in pdfs)
     print(f"flashpdf {flashpdf.__version__}  vs  pdf_oxide  vs  liteparse")
     print(f"corpus: {len(pdfs)} PDFs, {total_bytes / 1024 / 1024:.1f} MB total")

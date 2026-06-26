@@ -557,7 +557,27 @@ pdfplumber / pdftext / pymupdf4llm / markitdown：
   v0.3.1 降到 2%，**v0.3.2 降到 0%**——corpus 最低，反超 peers。
 
 > 完整方法学、版本号、字符数、p99 见 [基准报告](docs/BENCHMARK.md)。
-> 复现脚本：`python tests/bench_corpus.py`（5.9s 跑完全 165 文件）。
+
+#### 复现 165-PDF corpus 基准
+
+语料来源：**PyMuPDF 测试集的 bug-regression 资源**——每个 PDF 都是一次
+历史 bug 的最小复现，覆盖 CJK / 扫描 / 加密 / 表格 / 表单 / 矢量图，
+大小 865B-8.3MB。共 165 个 `.pdf` 文件。
+
+```bash
+# 1. clone 语料（约 50MB，--depth 1 不取历史）
+git clone --depth 1 https://github.com/pymupdf/PyMuPDF.git /tmp/pymupdf
+
+# 2. 安装三个库 + 基准脚本依赖
+pip install flashpdf liteparse pdf-oxide
+
+# 3. 用 CORPUS_DIR 指向 tests/resources 跑基准
+CORPUS_DIR=/tmp/pymupdf/tests/resources python tests/bench_corpus.py
+```
+
+脚本约 6 秒跑完，输出聚合表 / 单文件 speedup 分布 / 按文件大小分桶 /
+失败率统计。维护者本地路径（`~/Downloads/PyMuPDF-main/tests/resources`）
+是默认值，他人必须用 `CORPUS_DIR` 覆盖。
 
 ## 测试
 
