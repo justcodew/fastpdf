@@ -196,12 +196,35 @@ flashpdf 测试集中度高，但有些场景**没自动化测试覆盖**：
 
 ## 10. 已知 bug / 待修
 
-短期内不会修但已知的：
-
 - **`/Count` 在嵌套页树里不准**：v0.7.1 已修（三层 fallback），但极端边缘
   case（/Pages /Kids 引用循环）会无限递归栈溢出
 - **xref 全表扫描恢复 O(N)**：10000+ 对象的 PDF 全表扫描可能 100ms+，
   但仅在主路径失败时触发
+
+### v0.7.2 修复：11 个 page-tree bug（render_only 失败）
+
+v0.7.1 的渲染基准在 PyMuPDF 165-PDF 语料上有 11 个 PDF 渲染失败。
+根因是三个独立的 xref/page-tree 解析 bug：
+
+1. **`/Prev` 链不跟随**：incremental-update PDF（多次保存过的 PDF）
+   只有最新 xref 段被读，`/Prev` 指向的旧段被丢弃。修复：
+   `Document::parse_xref_at` 走 `/Prev` 链合并 entries（newest 胜出）。
+   影响：widgettest.pdf, test_3624.pdf, test_3848.pdf 等
+2. **xref stream 的 PNG predictor 不解码**：现代 PDF 的 xref stream
+   几乎全用 `/Predictor 12`（PNG Up）。原代码 Flate 解压后直接当 entry
+   字节解析，导致 type byte 错位 → 大部分 Compressed entries 指向不存在的
+   ObjStm → ObjStm 里的 page 对象全部丢失。修复：新增
+   `apply_png_predictor`，按 PNG 行格式（每行 1 字节 filter + Columns 数据）
+   反预测。**关键**：现实世界 PDF 即使 /Predictor 是 10-14 也用每行 filter
+   byte 的 PNG 格式（pdfium / PyMuPDF 行为一致）。
+   影响：test_2710.pdf, test_3058.pdf, test_4079.pdf, test_4755.pdf,
+   test_toc_count.pdf, v110-changes.pdf, test-3820.pdf, test_annot_file_info.pdf
+3. **`recover_page_refs` 跳过 Compressed entries**：上述 (2) 修好后，
+   page refs fallback 还需要扫 ObjStm 里的 page 对象。修复：扩展
+   `recover_page_refs` 同时处理 Uncompressed + Compressed entries，
+   按 (ObjStm byte offset, index within) 排序。
+
+修复后 165/165 全部渲染成功。带 7 个 PNG predictor 单元测试防回归。
 
 ## 选型建议
 

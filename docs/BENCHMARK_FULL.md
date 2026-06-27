@@ -31,8 +31,9 @@ liteparse 渲染第二快）—— 选型不能只看速度。
    强在自研 parser，弱在自研 rasterizer。
 4. **PDFium 内核 ≠ 同样快**：flashpdf 比 pypdfium2 快 3×——同样 PDFium，差距全在
    Python 绑定层 + PNG 编码层（Rust `image` crate vs PIL）。
-5. **渲染稳定性 ≠ 速度**：flashpdf 11 个失败（已知 bug），pdf_oxide 3 个；其他 3 个
-   0 失败。生产场景建议 flashpdf + pypdfium2/liteparse fallback。
+5. **渲染稳定性**：flashpdf / liteparse / pypdfium2 / PyMuPDF 全部 165/165 零失败；
+   pdf_oxide 162/165（3 个失败）。flashpdf v0.7.2 修了 v0.7.1 的 11 个 page-tree
+   bug（`/Prev` 链 + PNG predictor + ObjStm 扫描），现在和 PDFium/MuPDF 系同样稳定。
 
 ## 测试设置
 
@@ -116,8 +117,10 @@ PyMuPDF / pdf_oxide**。pdftext 内部用 pypdfium2（不单独测），其他 4
    但渲染倒数第二（112ms，长尾）。**选型时不能拿一个维度的 benchmark 套另一个维度**。
 4. **pdf_oxide 渲染有长尾**：p50 49ms 不慢，但 mean 112ms。8 个文件 >500ms，最慢
    test_3448.pdf **2.5s**。复杂矢量图/渐变/透明度合成场景需要优化（v0.3.x 早期）。
-5. **flashpdf 渲染有 11 个页树 bug**（已知）：`render_only=True` 模式未复用
-   `extract_doc` 的 page_count 三层 fallback，下版修。修复后失败率应降到 0。
+5. **flashpdf 渲染 165/165（v0.7.2 修好的 page-tree bug）**：v0.7.1 有 11 个 PDF
+   渲染失败，根因是 3 个独立的 xref 解析 bug（`/Prev` 链不跟随、xref stream
+   PNG predictor 不解码、recover_page_refs 跳过 Compressed entries）。v0.7.2
+   三个一起修，165/165 全部成功渲染，速度领先不变（25ms vs liteparse 33ms）。
 
 ### 2.0.1 文本排名 vs 渲染排名（公共 151 文件）
 
@@ -145,7 +148,7 @@ PyMuPDF / pdf_oxide**。pdftext 内部用 pypdfium2（不单独测），其他 4
 
 | 库 | 渲染后端 | 成功率 | mean | p50 | p90 | 总耗时 |
 |---|---|---:|---:|---:|---:|---:|
-| **flashpdf** | PDFium (Rust + image crate PNG) | **154/165** | **25.14ms** | **16.38ms** | **36.27ms** | **3.87s** |
+| **flashpdf** | PDFium (Rust + image crate PNG) | **165/165** | **25.52ms** | **16.14ms** | **37.91ms** | **4.21s** |
 | liteparse | PDFium (Rust 直绑) | 165/165 | 33.06ms | 23.62ms | 44.15ms | 5.46s |
 | pypdfium2 | PDFium (Python ctypes) | 165/165 | 67.13ms | 57.85ms | 74.06ms | 11.08s |
 | PyMuPDF | MuPDF raster | 165/165 | 103.11ms | 73.14ms | 122.40ms | 17.01s |
@@ -197,13 +200,13 @@ Apple Silicon 上慢 1.5-2×。
 
 | 库 | 失败 | 文件 |
 |---|---:|---|
-| flashpdf | 11 | 异常页树：`render_only=True` 未复用 `extract_doc` 的 page_count 三层 fallback |
+| flashpdf | **0**（v0.7.2 已修）| — |
 | pdf_oxide | 3 | `test_3450.pdf`, `test_3806.pdf`, `test_4790.pdf`（具体原因未深挖，可能是 PDF 加密或损坏对象）|
 | liteparse | 0 | — |
 | pypdfium2 | 0 | — |
 | PyMuPDF | 0 | — |
 
-flashpdf 的 11 个失败：
+**v0.7.1 → v0.7.2 修复的 11 个 PDF**（曾经失败，现 165/165）：
 
 ```
 test-3820.pdf, test_2710.pdf, test_3058.pdf, test_3624.pdf, test_3848.pdf,
@@ -211,18 +214,24 @@ test_4079.pdf, test_4755.pdf, test_annot_file_info.pdf, test_toc_count.pdf,
 v110-changes.pdf, widgettest.pdf
 ```
 
-**原因**：`render_only=True` 模式走 stub PageResult，未复用 `extract_doc` 里的
-3-tier page_count 恢复路径（top-level /Count → /Kids 遍历 → xref 全表扫描）。
-这些 PDF 都有异常页树（嵌套 /Pages /Count 不一致、/Kids 引用循环等）。
-**修复路径**：把 page_count 三层 fallback 提取成独立函数，render_only 路径也调用。
-**优先级**：中（已知 bug，下一版修）。
+**根因（3 个独立 xref/page-tree 解析 bug）**：
+1. `/Prev` 链不跟随：incremental-update PDF（多次保存过的 PDF）只有最新 xref 段被读，
+   `/Prev` 指向的旧段被丢弃 → page_count=0
+2. xref stream 的 PNG predictor 不解码：现代 PDF 的 xref stream 几乎全用
+   `/Predictor 12`。Flate 解压后直接当 entry 字节解析 → type byte 错位 → 大部分
+   Compressed entries 指向不存在的 ObjStm → ObjStm 里的 page 对象全部丢失
+3. `recover_page_refs` 跳过 Compressed entries：上述 (2) 修好后，page refs fallback
+   还需要扫 ObjStm 里的 page 对象
+
+**修复**：见 [`LIMITATIONS.md` §10](LIMITATIONS.md#10-已知-bug--待修)。带 7 个
+PNG predictor 单元测试防回归。
 
 ## 3. 失败模式分析
 
 | 库 | 失败文件数 | 类型 |
 |---|---:|---|
 | flashpdf (text) | 0 | — |
-| flashpdf (render) | 11 | 页树异常（render_only 未复用 page_count 三层 fallback）|
+| flashpdf (render) | **0**（v0.7.2 修好）| — |
 | liteparse (text) | 2 + 1 skip | `circular-toc.pdf` 已知无限循环跳过；`test-3820.pdf` / `test_3594.pdf` |
 | liteparse (render) | 0 | — |
 | pdf_oxide (text) | 0 | — |
@@ -279,10 +288,9 @@ pypdf 在加密 + 损坏 xref 上比 Rust/C 实现的库脆弱。
    渲染倒数第二（112ms）。原因：pdf_oxide 用 Rust 自研 parser 做文本提取（快），
    但渲染用自研 rasterizer 在矢量图/渐变场景有长尾。**与 liteparse 完全对称**——
    pdf_oxide 强在解析，liteparse 强在调用 PDFium。
-7. **渲染稳定性 ≠ 速度**：flashpdf 11 个失败（页树 bug），pdf_oxide 3 个失败；
-   liteparse / pypdfium2 / PyMuPDF 都是 165/165 零失败。**生产场景里 0.1% 失败率
-   可能比 30% 速度优势更重要**——如果用 flashpdf 渲染建议加 fallback 到 pypdfium2
-   或 liteparse。
+7. **渲染稳定性**：flashpdf / liteparse / pypdfium2 / PyMuPDF 全部 165/165 零失败；
+   pdf_oxide 162/165（3 个失败）。flashpdf v0.7.2 修了 v0.7.1 的 11 个 page-tree
+   bug 后已与 PDFium/MuPDF 系稳定性持平。
 
 ## 5. 选型建议
 
