@@ -206,8 +206,7 @@ impl Document {
         // Unsupported schemes (non-Standard handler, AES-256, non-empty
         // password) return an error so callers can surface it; PDFs without
         // `/Encrypt` skip this entirely.
-        let decryptor = if xref.encrypt.is_some() {
-            let encrypt_id = xref.encrypt.unwrap();
+        let decryptor = if let Some(encrypt_id) = xref.encrypt {
             let entry = xref.entries.get(&encrypt_id.num).ok_or_else(|| {
                 ParseError::Message("encrypt dict ref not in xref".to_string())
             })?;
