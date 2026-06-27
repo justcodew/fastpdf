@@ -1,6 +1,16 @@
 # flashpdf
 
-世界上最快的 PDF 文本与图像提取引擎。Rust 核心 + Python 绑定。
+**文本提取 + 页面渲染速度最快的 PDF 库**。Rust 核心 + Python 绑定。
+
+> 在 165-PDF PyMuPDF bug-regression 病理语料上：
+> - 文本提取比第二名快 **11×**（flashpdf 3.06ms vs pdf_oxide 34ms）
+> - 页面渲染比第二名快 **1.4×**（flashpdf 19.76ms vs liteparse 27.87ms）
+> - 所有文件大小桶（tiny / small / medium / large）都是第一
+>
+> **速度领先 ≠ 全维度领先**——加密 PDF（AES-256）、编辑、注释、表单、OCR 等场景
+> 仍推荐 PyMuPDF / pdf_oxide / pdfplumber。完整对比见
+> [BENCHMARK_FULL.md](docs/BENCHMARK_FULL.md)，已知短板见
+> [LIMITATIONS.md](docs/LIMITATIONS.md)。
 
 ## 提取效果演示
 
@@ -78,17 +88,46 @@ flashpdf toc paper.pdf --rich           # 完整 JSON（含 kind/uri/to_point）
 
 ## 适用范围
 
-flashpdf 是**纯数据提取 + 可选渲染工具**——不做 OCR、不做编辑、不做 AES-256。
+flashpdf 是**纯只读数据提取 + 可选页面渲染工具**——速度快是核心目标，但不是全场景方案。
 
-- ✅ 文本提取（blocks/lines/spans，含 bbox/字体/字号/颜色）
-- ✅ 嵌入图像提取（`Do` 引用的位图对象，**不是页面截图**）
-- ✅ 页面渲染（`render` feature + PDFium binary，`page.get_pixmap()`）
-- ❌ 矢量图光栅化、OCR、PDF 编辑、AES-256 加密、字体度量扩展字段
+### ✅ 擅长（速度第一）
 
-完整短板清单（加密限制、字段精度、未测场景等）见 **[LIMITATIONS.md](docs/LIMITATIONS.md)**。
-渲染基准和与 fitz / pypdfium2 的对比见 **[BENCHMARK_RENDER.md](docs/BENCHMARK_RENDER.md)**。
+- **文本提取**：blocks/lines/spans，含 bbox/字体/字号/颜色；165-PDF 语料 0% 失败率
+- **嵌入图像提取**：`Do` 引用的位图（JPEG/PNG/JPX）+ BI/ID/EI 内联图像，原始字节直出
+- **页面渲染**（需 `render` feature + PDFium binary）：`page.get_pixmap(dpi=150)` 返回 PNG bytes
+- **批量吞吐**：mmap 零拷贝、memchr SIMD 扫描、rayon 页级并行 + 文件级并行
+
+### ❌ 不做（设计目标，永远不会做）
+
+- **OCR**：不识别扫描页文字，只识别"是扫描页"；要 OCR 用 Tesseract / PaddleOCR
+- **PDF 编辑**：合并/拆分/加页/删页/表单填写/签名/注释——用 PyMuPDF / pypdf / pdf_oxide
+- **AES-256 加密 PDF**：只支持 RC4 + AES-128 空密码；AES-256 直接抛 `ValueError`
+- **矢量图光栅化**：页面里的曲线/路径不渲染；要矢量转位图用 PyMuPDF
+- **可访问性标记树（/StructTree）/ 嵌入式文件流 / 增量更新解析**
+
+### ⚠️ 能做但不是最强（推荐看场景换库）
+
+| 场景 | flashpdf 表现 | 更合适的库 |
+|---|---|---|
+| 加密 PDF（任意密码 / AES-256）| 不支持 | PyMuPDF / pypdfium2 |
+| PDF 编辑（合并 / 拆分 / 签名 / 水印）| 不支持 | pdf_oxide / PyMuPDF / pypdf |
+| 渲染稳定性（要求 0% 失败）| 11/165 页树 bug（已知，下版修）| pypdfium2 / PyMuPDF（165/165）|
+| 渲染部署便利（pip 装即用）| 需 PDFium binary | pypdfium2（自带 PDFium）|
+| 渲染输出 raw RGBA / numpy | 只输出 PNG bytes | PyMuPDF（`pix.samples` 直出）|
+| `span.flags` 精度 | 名字启发式（不读 /FontDescriptor /Flags）| PyMuPDF |
+| 字体度量字段（ascender/descender/origin）| 不输出 | PyMuPDF |
+| 表格提取（精确 cell 坐标）| 不做 | pdfplumber / pdftext |
+| LLM 友好 markdown 输出 | 不做 | markitdown / pdftext |
+
+完整短板清单（加密限制细节、字段精度、未测场景、渲染 API 边界等）见
+**[LIMITATIONS.md](docs/LIMITATIONS.md)**；10 库全面对比见
+**[BENCHMARK_FULL.md](docs/BENCHMARK_FULL.md)**；纯渲染基准见
+**[BENCHMARK_RENDER.md](docs/BENCHMARK_RENDER.md)**。
 
 ## 基准
+
+> **新**：10 库全面对比（文本提取 + 页面渲染 + 分桶 + 选型建议）见
+> **[BENCHMARK_FULL.md](docs/BENCHMARK_FULL.md)**。下面是文本提取的快速摘要。
 
 **165-PDF 病理语料**（PyMuPDF bug-regression 测试集，每个 PDF 是一次历史 bug 的最小复现，
 覆盖 CJK / 扫描 / 加密 / 表格 / 表单 / 矢量图，865B-8.3MB）：
