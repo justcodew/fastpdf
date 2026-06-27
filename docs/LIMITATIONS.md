@@ -112,11 +112,15 @@ flashpdf 的图像提取**只针对嵌入位图**——`Do` 引用的 Image XObj
 ❌ 不支持：
 - 矢量图（页面里的路径、曲线、填充）—— 不算"图像"
 - 页面截图（"渲染这页为图片"用 `get_pixmap`，不是 `get_images`）
-- 内联图像（/EI /W /IB）—— 当前实现跳过
 - CCITT Fax 编码（CCFDecode）—— 老式扫描 PDF 可能有
 - JBIG2 / RunLength 编码 —— 罕见但合法
 - 嵌入式 ICC 配置文件提取 —— 颜色管理交给调用方
 - /SMask 软掩膜分离 —— 直接内联到主图像，不单独提取
+
+✅ **支持内联图像**（v0.7.2 新增）：`BI/ID/EI` 操作符（PDF spec §8.9.7）
+现在被解析，inline 图像进入 `page.get_images()`（`name="inline"`），
+`page.diagnostics.inline_image_count` 暴露计数。`is_scanned` 启发式也
+纳入 inline 图像，避免扫描页误判。
 
 **未对比 benchmark**：vs PyMuPDF / pdfimages / pypdf 的图像提取速度**没测过**。
 理论上跟随文本提取的速度（同一遍解析），但**没数据支撑"图像提取也最快"**。

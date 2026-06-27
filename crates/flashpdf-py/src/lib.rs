@@ -360,6 +360,7 @@ fn render_extract_result<'py>(
             diag_dict.set_item("type3_char_count", diag.type3_char_count)?;
             diag_dict.set_item("undecoded_byte_count", diag.undecoded_byte_count)?;
             diag_dict.set_item("out_of_page_block_count", diag.out_of_page_block_count)?;
+            diag_dict.set_item("inline_image_count", diag.inline_image_count)?;
             page_dict.set_item("diagnostics", diag_dict)?;
             pages_list.append(page_dict)?;
         }
@@ -774,6 +775,10 @@ impl PyPage {
     ///     /ToUnicode or /Encoding).
     ///   - `out_of_page_block_count`: blocks dropped by the reading-order
     ///     margin filter (bbox extends >10% outside the page rect).
+    ///   - `inline_image_count`: inline images (BI/ID/EI operators, PDF
+    ///     spec §8.9.7) embedded in the content stream. These are also
+    ///     included in `page.get_images()` with name="inline". A high count
+    ///     with low text suggests an old scanned PDF.
     #[getter]
     fn diagnostics<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let d = PyDict::new(py);
@@ -782,6 +787,7 @@ impl PyPage {
         d.set_item("type3_char_count", diag.type3_char_count)?;
         d.set_item("undecoded_byte_count", diag.undecoded_byte_count)?;
         d.set_item("out_of_page_block_count", diag.out_of_page_block_count)?;
+        d.set_item("inline_image_count", diag.inline_image_count)?;
         Ok(d)
     }
 }
