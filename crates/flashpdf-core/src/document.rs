@@ -207,9 +207,10 @@ impl Document {
         // password) return an error so callers can surface it; PDFs without
         // `/Encrypt` skip this entirely.
         let decryptor = if let Some(encrypt_id) = xref.encrypt {
-            let entry = xref.entries.get(&encrypt_id.num).ok_or_else(|| {
-                ParseError::Message("encrypt dict ref not in xref".to_string())
-            })?;
+            let entry = xref
+                .entries
+                .get(&encrypt_id.num)
+                .ok_or_else(|| ParseError::Message("encrypt dict ref not in xref".to_string()))?;
             let offset = entry.field1 as usize;
             // Parse /Encrypt dict directly from raw bytes — do NOT route
             // through Document::get_object (no Document yet) and do NOT
@@ -223,10 +224,11 @@ impl Document {
         } else if xref.encrypt_present {
             // Inline /Encrypt dict case. Re-walk the trailer starting at the
             // recorded offset to find the dict, then pull /Encrypt out of it.
-            let inline =
-                parse_inline_encrypt_from_trailer(data, xref.trailer_offset)?;
+            let inline = parse_inline_encrypt_from_trailer(data, xref.trailer_offset)?;
             let doc_id = xref.id_first.as_deref().unwrap_or(&[]);
-            Some(crate::crypto::Decryptor::from_encrypt_dict(&inline, doc_id)?)
+            Some(crate::crypto::Decryptor::from_encrypt_dict(
+                &inline, doc_id,
+            )?)
         } else {
             None
         };
@@ -667,20 +669,16 @@ fn parse_object_at(
 
     // Parse object header: N G obj
     cur.skip_ws();
-    let _obj_num =
-        crate::parser::xref::parse_positive_int_from_cursor(&mut cur).map_err(|e| {
-            e.at(offset, data)
-        })? as u32;
+    let _obj_num = crate::parser::xref::parse_positive_int_from_cursor(&mut cur)
+        .map_err(|e| e.at(offset, data))? as u32;
     cur.skip_ws();
-    let _gen = crate::parser::xref::parse_positive_int_from_cursor(&mut cur).map_err(|e| {
-        e.at(offset, data)
-    })? as u16;
+    let _gen = crate::parser::xref::parse_positive_int_from_cursor(&mut cur)
+        .map_err(|e| e.at(offset, data))? as u16;
     cur.skip_ws();
 
     // Expect "obj"
     if !cur.remaining().starts_with(b"obj") {
-        return Err(ParseError::Message("expected 'obj' keyword".to_string())
-            .at(offset, data));
+        return Err(ParseError::Message("expected 'obj' keyword".to_string()).at(offset, data));
     }
     cur.advance(3);
 

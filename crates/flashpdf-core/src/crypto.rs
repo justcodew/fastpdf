@@ -459,9 +459,7 @@ mod tests {
         // Independent reference computed in Python with the 3-byte form:
         //   hashlib.md5(b'\xaa'*5 + (256).to_bytes(3,'little') + (0).to_bytes(2,'little'))
         //     .digest()[:10]
-        let expected: [u8; 10] = [
-            0xbb, 0xd6, 0xcb, 0x1c, 0x1a, 0xc3, 0xe9, 0x97, 0xf5, 0x59,
-        ];
+        let expected: [u8; 10] = [0xbb, 0xd6, 0xcb, 0x1c, 0x1a, 0xc3, 0xe9, 0x97, 0xf5, 0x59];
         assert_eq!(&key_correct[..], &expected[..]);
     }
 
