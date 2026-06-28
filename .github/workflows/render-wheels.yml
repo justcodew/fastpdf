@@ -47,11 +47,9 @@ jobs:
             pdfium_archive: pdfium-linux-x64.tgz
             pdfium_lib: libpdfium.so
             pdfium_inner_path: lib
-          - os: ubuntu-latest
-            target: aarch64
-            pdfium_archive: pdfium-linux-arm64.tgz
-            pdfium_lib: libpdfium.so
-            pdfium_inner_path: lib
+          # NOTE: linux aarch64 is intentionally absent. pdfium-render 0.9.2
+          # has an upstream compile bug on that target (char signedness).
+          # Re-add after the crate ships a fixed release.
           # macOS — internal path inside tgz: Libraries/libpdfium.dylib
           - os: macos-latest
             target: x86_64
@@ -106,7 +104,7 @@ jobs:
           # GNU tar (linux), and Windows. bblanchon layout differs per
           # platform: linux=lib/, mac=Libraries/, win=bin/. We pull out
           # just the library file and drop it under bundle_dir/.
-          python - <<PY
+          python3 - <<PY
           import os, tarfile, sys
           bundle = os.environ["bundle_dir"]
           inner_path = os.environ["PDFIUM_INNER_PATH"]
