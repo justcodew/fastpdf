@@ -41,29 +41,34 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux
+          # Linux — internal path inside tgz: lib/libpdfium.so
           - os: ubuntu-latest
             target: x86_64
-            pdfium_archive: pdfium-linux.tgz
+            pdfium_archive: pdfium-linux-x64.tgz
             pdfium_lib: libpdfium.so
+            pdfium_inner_path: lib
           - os: ubuntu-latest
             target: aarch64
             pdfium_archive: pdfium-linux-arm64.tgz
             pdfium_lib: libpdfium.so
-          # macOS
+            pdfium_inner_path: lib
+          # macOS — internal path inside tgz: Libraries/libpdfium.dylib
           - os: macos-latest
             target: x86_64
-            pdfium_archive: pdfium-mac.tgz
+            pdfium_archive: pdfium-mac-x64.tgz
             pdfium_lib: libpdfium.dylib
+            pdfium_inner_path: Libraries
           - os: macos-latest
             target: aarch64
             pdfium_archive: pdfium-mac-arm64.tgz
             pdfium_lib: libpdfium.dylib
-          # Windows
+            pdfium_inner_path: Libraries
+          # Windows — internal path inside tgz: bin/pdfium.dll
           - os: windows-latest
             target: x64
             pdfium_archive: pdfium-win-x64.tgz
             pdfium_lib: pdfium.dll
+            pdfium_inner_path: bin
 
     steps:
       - uses: actions/checkout@v4
@@ -87,6 +92,7 @@ jobs:
           PDFIUM_RELEASE: ${{ github.event.inputs.pdfium_release || 'chromium/7906' }}
           PDFIUM_ARCHIVE: ${{ matrix.pdfium_archive }}
           PDFIUM_LIB: ${{ matrix.pdfium_lib }}
+          PDFIUM_INNER_PATH: ${{ matrix.pdfium_inner_path }}
         run: |
           set -euo pipefail
           # This is the path maturin's `include` directive reads from, and
@@ -96,8 +102,12 @@ jobs:
           url="https://github.com/bblanchon/pdfium-binaries/releases/download/${PDFIUM_RELEASE}/${PDFIUM_ARCHIVE}"
           echo "Downloading $url"
           curl -fL -o pdfium.tgz "$url"
-          # bblanchon archive layout: Libraries/<lib> at archive root.
-          tar -xzf pdfium.tgz -C "$bundle_dir" --strip-components=1 "Libraries/${PDFIUM_LIB}"
+          # bblanchon archive layout differs per platform:
+          #   linux:  lib/libpdfium.so
+          #   macos:  Libraries/libpdfium.dylib
+          #   win:    bin/pdfium.dll
+          # Strip the top dir, keep only the library file itself.
+          tar -xzf pdfium.tgz -C "$bundle_dir" --strip-components=1 "${PDFIUM_INNER_PATH}/${PDFIUM_LIB}"
           ls -la "$bundle_dir"
 
       - name: Build render wheel
