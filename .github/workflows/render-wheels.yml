@@ -51,7 +51,11 @@ jobs:
           # has an upstream compile bug on that target (char signedness).
           # Re-add after the crate ships a fixed release.
           # macOS — internal path inside tgz: Libraries/libpdfium.dylib
-          - os: macos-latest
+          # macOS x86_64: must use macos-13 (Intel runner). macos-latest is
+          # arm64 — building x86_64 wheels there cross-compiles, and the
+          # resulting wheel can't install into the arm64 Python for the
+          # smoke test.
+          - os: macos-13
             target: x86_64
             pdfium_archive: pdfium-mac-x64.tgz
             pdfium_lib: libpdfium.dylib
