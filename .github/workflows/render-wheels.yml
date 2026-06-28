@@ -97,17 +97,36 @@ jobs:
           set -euo pipefail
           # This is the path maturin's `include` directive reads from, and
           # the path that ends up inside the wheel as flashpdf/_pdfium/<lib>.
-          bundle_dir="python/flashpdf/_pdfium"
+          export bundle_dir="python/flashpdf/_pdfium"
           mkdir -p "$bundle_dir"
           url="https://github.com/bblanchon/pdfium-binaries/releases/download/${PDFIUM_RELEASE}/${PDFIUM_ARCHIVE}"
           echo "Downloading $url"
           curl -fL -o pdfium.tgz "$url"
-          # bblanchon archive layout differs per platform:
-          #   linux:  lib/libpdfium.so
-          #   macos:  Libraries/libpdfium.dylib
-          #   win:    bin/pdfium.dll
-          # Strip the top dir, keep only the library file itself.
-          tar -xzf pdfium.tgz -C "$bundle_dir" --strip-components=1 "${PDFIUM_INNER_PATH}/${PDFIUM_LIB}"
+          # Use Python for extraction — portable across BSD tar (mac),
+          # GNU tar (linux), and Windows. bblanchon layout differs per
+          # platform: linux=lib/, mac=Libraries/, win=bin/. We pull out
+          # just the library file and drop it under bundle_dir/.
+          python - <<PY
+          import os, tarfile, sys
+          bundle = os.environ["bundle_dir"]
+          inner_path = os.environ["PDFIUM_INNER_PATH"]
+          lib = os.environ["PDFIUM_LIB"]
+          member = f"{inner_path}/{lib}"
+          with tarfile.open("pdfium.tgz", "r:gz") as tar:
+              try:
+                  f = tar.extractfile(member)
+              except KeyError:
+                  # Print available members so we can debug layout mismatches.
+                  avail = "\n".join(m.name for m in tar.getmembers() if lib in m.name)
+                  print(f"ERROR: {member} not in archive. Matching members:\n{avail}", file=sys.stderr)
+                  sys.exit(1)
+              if f is None:
+                  print(f"ERROR: {member} is not a regular file", file=sys.stderr)
+                  sys.exit(1)
+              with open(os.path.join(bundle, lib), "wb") as out:
+                  out.write(f.read())
+          print(f"Extracted {member} -> {bundle}/{lib}")
+          PY
           ls -la "$bundle_dir"
 
       - name: Build render wheel
