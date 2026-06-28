@@ -1,0 +1,142 @@
+# Build render-enabled wheels (bundled PDFium binary)
+#
+# Status: DRAFT — not yet active. Triggers only on workflow_dispatch (manual)
+# until the PDFium bundling strategy is finalized.
+#
+# Open work before this can be enabled in CI/CD:
+#   1. Bundling: how does the PDFium binary get *inside* the wheel?
+#      Candidate approach: place under `python/flashpdf/_pdfium/` and have
+#      render.rs find it via `importlib.resources` / `Path(__file__).parent`
+#      at runtime. Maturin `include` directive can carry the binary.
+#   2. bblanchon/pdfium-binaries release tag to pin (currently chromium/7906).
+#      Pinning ensures reproducible builds; bump deliberately.
+#   3. Smoke test on each platform: install built wheel, render a sample PDF,
+#      assert PNG magic bytes. Without PDFium findable, get_pixmap() must
+#      still raise NotImplementedError cleanly.
+#   4. Once stable, change `on:` to also fire on tag pushes (mirroring
+#      build-wheels.yml) and merge into the main publish pipeline.
+#
+# See docs/RENDER_DEPLOYMENT.md for the full distribution-strategy discussion.
+
+name: Build Render Wheels
+
+on:
+  workflow_dispatch:
+    inputs:
+      pdfium_release:
+        description: "bblanchon/pdfium-binaries release tag (e.g. chromium/7906)"
+        required: false
+        default: "chromium/7906"
+
+permissions:
+  contents: read
+
+jobs:
+  build-render-wheel:
+    name: Render wheel (${{ matrix.os }}, ${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux
+          - os: ubuntu-latest
+            target: x86_64
+            pdfium_archive: pdfium-linux.tgz
+            pdfium_lib: libpdfium.so
+          - os: ubuntu-latest
+            target: aarch64
+            pdfium_archive: pdfium-linux-arm64.tgz
+            pdfium_lib: libpdfium.so
+          # macOS
+          - os: macos-latest
+            target: x86_64
+            pdfium_archive: pdfium-mac.tgz
+            pdfium_lib: libpdfium.dylib
+          - os: macos-latest
+            target: aarch64
+            pdfium_archive: pdfium-mac-arm64.tgz
+            pdfium_lib: libpdfium.dylib
+          # Windows
+          - os: windows-latest
+            target: x64
+            pdfium_archive: pdfium-win-x64.tgz
+            pdfium_lib: pdfium.dll
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download PDFium binary
+        shell: bash
+        env:
+          PDFIUM_RELEASE: ${{ github.event.inputs.pdfium_release || 'chromium/7906' }}
+          PDFIUM_ARCHIVE: ${{ matrix.pdfium_archive }}
+        run: |
+          set -euo pipefail
+          mkdir -p pdfium-bin
+          url="https://github.com/bblanchon/pdfium-binaries/releases/download/${PDFIUM_RELEASE}/${PDFIUM_ARCHIVE}"
+          echo "Downloading $url"
+          curl -fL -o pdfium.tgz "$url"
+          # bblanchon archives layout: Libraries/<lib> at the archive root.
+          # Extract just the library file into pdfium-bin/ (matches the
+          # dev fallback path that render.rs already searches).
+          tar -xzf pdfium.tgz -C pdfium-bin --strip-components=1 "Libraries/${{ matrix.pdfium_lib }}"
+          ls -la pdfium-bin/
+
+      - name: Build render wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --find-interpreter --features render
+          manylinux: auto
+        env:
+          # Build-time: PDFium presence is optional for *compiling* render.rs
+          # (it loads the library dynamically at runtime). PDFIUM_PATH here
+          # only matters if any build script tries to link statically, which
+          # we do not do.
+          PDFIUM_PATH: ${{ github.workspace }}/pdfium-bin/${{ matrix.pdfium_lib }}
+
+      # TODO(bundling): the wheel built above does NOT contain the PDFium
+      # binary. End users installing it would still need PDFium on their
+      # system. To bundle, one of:
+      #   (a) maturin `include` directive carrying pdfium-bin/* into the
+      #       wheel under flashpdf/_pdfium/, plus render.rs change to find
+      #       it via importlib.resources at runtime;
+      #   (b) post-build wheel mutation with `wheel tags --add-data ...`-
+      #       style tooling.
+      # Pick one and implement before enabling in the publish pipeline.
+
+      - name: Smoke test built wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          pip install --force-reinstall dist/*.whl
+          # Verify render feature is compiled in (should NOT raise NotImplementedError
+          # when PDFium is findable via PDFIUM_PATH).
+          export PDFIUM_PATH="$PWD/pdfium-bin/${{ matrix.pdfium_lib }}"
+          python - <<'PY'
+          import flashpdf, os, sys
+          # Use a tiny in-repo test PDF if present, otherwise skip the render call.
+          sample = "test_data/sample.pdf"
+          if not os.path.exists(sample):
+              print(f"skip render smoke: {sample} not found")
+              sys.exit(0)
+          with flashpdf.open(sample, render_only=True) as doc:
+              png = doc[0].get_pixmap(dpi=72)
+              assert png[:8] == b"\x89PNG\r\n\x1a\n", "PNG magic missing"
+              print(f"OK: rendered {len(png)} bytes")
+          PY
+
+      - name: Upload render wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-wheels-${{ matrix.os }}-${{ matrix.target }}
+          path: dist/*.whl

@@ -30,6 +30,29 @@ dependencies = [
     "click>=8.0",
 ]
 
+# Render-feature distribution strategy (open decision, see docs/RENDER_DEPLOYMENT.md):
+# - Default PyPI wheel is text-only (no PDFium dependency, ~3MB).
+# - Users who want `page.get_pixmap()` need a render-enabled build.
+# - Three candidate strategies, pick one before merging feature/render to main:
+#     (a) Single wheel, default = render + bundled PDFium (~13MB). Simplest UX,
+#         matches pypdfium2. Everyone pays the size cost.
+#     (b) Two PyPI packages: `flashpdf` (text) + `flashpdf-render` (render+PDFium).
+#     (c) Source-only render: `pip install flashpdf` stays text-only, render
+#         requires `pip install flashpdf && maturin develop --features render`
+#         (current state, poor UX).
+# When strategy is chosen, fill in [project.optional-dependencies] / separate
+# package config accordingly. Placeholder kept here so the future config slot
+# is visible.
+# [project.optional-dependencies]
+# render = []
+
+[project.urls]
+Homepage = "https://github.com/justcodew/flashpdf"
+Repository = "https://github.com/justcodew/flashpdf"
+Documentation = "https://github.com/justcodew/flashpdf/tree/main/docs"
+Changelog = "https://github.com/justcodew/flashpdf/blob/main/CHANGELOG.md"
+Issues = "https://github.com/justcodew/flashpdf/issues"
+
 [project.scripts]
 flashpdf = "flashpdf.cli:main"
 
