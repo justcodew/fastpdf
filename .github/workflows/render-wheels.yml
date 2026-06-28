@@ -67,6 +67,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        # TEMPORARY (until feature/render merges to main): pin checkout to
+        # the feature branch so this workflow, which lives on main, tests
+        # the feature branch's code. Drop the `with: ref:` block after merge.
+        with:
+          ref: feature/render
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
