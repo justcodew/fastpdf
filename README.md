@@ -4,7 +4,7 @@
 
 > 在 165-PDF PyMuPDF bug-regression 病理语料上：
 > - 文本提取比第二名快 **11×**（flashpdf 3.06ms vs pdf_oxide 34ms）
-> - 页面渲染比第二名快 **1.4×**（flashpdf 19.76ms vs liteparse 27.87ms）
+> - 页面渲染比第二名快 **1.4×**（flashpdf 19.72ms vs liteparse 27.80ms，165/165 零失败）
 > - 所有文件大小桶（tiny / small / medium / large）都是第一
 >
 > **速度领先 ≠ 全维度领先**——加密 PDF（AES-256）、编辑、注释、表单、OCR 等场景
