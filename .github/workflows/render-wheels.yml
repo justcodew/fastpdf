@@ -55,12 +55,12 @@ jobs:
             target: x86_64
             pdfium_archive: pdfium-mac-x64.tgz
             pdfium_lib: libpdfium.dylib
-            pdfium_inner_path: Libraries
+            pdfium_inner_path: lib
           - os: macos-latest
             target: aarch64
             pdfium_archive: pdfium-mac-arm64.tgz
             pdfium_lib: libpdfium.dylib
-            pdfium_inner_path: Libraries
+            pdfium_inner_path: lib
           # Windows — internal path inside tgz: bin/pdfium.dll
           - os: windows-latest
             target: x64
