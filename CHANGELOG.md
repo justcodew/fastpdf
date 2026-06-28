@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.2] - 2026-06-28
+
+补丁发布：v0.8.1 漏了 `NOTICE` 文件的 sdist include。PyPI 同样以
+"License-File NOTICE does not exist" 拒绝。现在把 LICENSE / NOTICE /
+LICENSES/ 全部显式 include 进 sdist。
+
 ## [0.8.1] - 2026-06-28
 
 修复 v0.8.0 的 sdist 上传失败：maturin 不自动把 `LICENSE` 放进 sdist
