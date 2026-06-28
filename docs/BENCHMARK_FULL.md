@@ -6,22 +6,25 @@
 
 ## TL;DR
 
-flashpdf 在 **文本提取** 和 **页面渲染** 两个场景都是**最快**——但不是所有场景，
-也不是没有代价。
+flashpdf 在 **文本提取** 和 **页面渲染** 两个场景都是**最快且零失败**——v0.7.2
+修好 11 个 page-tree bug 后渲染 165/165 全部成功，速度领先不变。
 
 | 场景 | 最快 | flashpdf 倍数 | 注 |
 |---|---|---|---|
 | 文本提取（154 文件 apples-to-apples） | **flashpdf 3.06ms** | — | pdf_oxide 第二（11×），PyMuPDF 第三（31×）|
 | 文本提取大文件（>1MB, p50） | **flashpdf 5.66ms** | pdf_oxide 8×、PyMuPDF 24×、liteparse 475× | 大文件优势放大 |
 | 页面渲染（162 文件公共集，DPI 150） | **flashpdf 19.72ms** | liteparse 1.4×、pypdfium2 3.0×、PyMuPDF 4.3×、pdf_oxide 6.0× | 同 PDFium 内核但 PNG 编码更快 |
+| 页面渲染稳定性（165 文件） | **165/165 零失败** | — | 与 liteparse / pypdfium2 / PyMuPDF 持平（v0.7.2 修复后）|
 | 极小文件（<10KB）批量 | flashpdf 0.98ms | pdf_oxide 20×、其他 ≥ 40× | 启动开销主导，差距小但 flashpdf 仍领先 |
 
-**结论**：在"快速解析大量 PDF"这一目标上 flashpdf 是综合最优解；其他 9 个库各有定位
-（pdf_oxide 编辑能力强、PyMuPDF 全功能、pypdf 纯 Python 零依赖、pdfplumber 表格、
-markitdown LLM 友好 markdown、pdftext 阅读序还原、pdfminer 字符级、pypdfium2 渲染稳定、
-liteparse 渲染第二快）—— 选型不能只看速度。
+**最终结论**：在"快速解析大量 PDF"这一目标上 flashpdf 是综合最优解——速度第一、
+稳定性第一、API 接近 fitz。其他 9 个库各有不可替代的定位（pdf_oxide 编辑能力强、
+PyMuPDF 全功能含 AES-256/OCR、pypdf 纯 Python 零依赖、pdfplumber 表格、markitdown
+LLM 友好 markdown、pdftext 阅读序还原、pdfminer 字符级、pypdfium2 部署最简单、
+liteparse 渲染第二快）——速度只是选型的一维，加密 / 编辑 / 表格 / LLM 输出等场景
+仍要看具体需求选库。
 
-**5 个反直觉发现**（详见 §2.0 / §4）：
+**5 个关键发现**（详见 §2.0 / §4）：
 
 1. **PDFium 家族霸占渲染榜前 3**：flashpdf / liteparse / pypdfium2 都基于 PDFium，
    其他 2 个（PyMuPDF / pdf_oxide）被甩开 3× 以上。
@@ -31,9 +34,11 @@ liteparse 渲染第二快）—— 选型不能只看速度。
    强在自研 parser，弱在自研 rasterizer。
 4. **PDFium 内核 ≠ 同样快**：flashpdf 比 pypdfium2 快 3×——同样 PDFium，差距全在
    Python 绑定层 + PNG 编码层（Rust `image` crate vs PIL）。
-5. **渲染稳定性**：flashpdf / liteparse / pypdfium2 / PyMuPDF 全部 165/165 零失败；
-   pdf_oxide 162/165（3 个失败）。flashpdf v0.7.2 修了 v0.7.1 的 11 个 page-tree
-   bug（`/Prev` 链 + PNG predictor + ObjStm 扫描），现在和 PDFium/MuPDF 系同样稳定。
+5. **flashpdf v0.7.2 修好后已与 PDFium/MuPDF 系稳定性持平**：v0.7.1 在 PyMuPDF
+   bug-regression 语料上 11 个 PDF 渲染失败，根因是 3 个独立的 xref 解析 bug
+   （`/Prev` 链不跟随、xref stream 的 PNG predictor 不解码、recover_page_refs
+   跳过 Compressed entries）。修复后 165/165 全部成功，速度领先不变。
+   详见 [`LIMITATIONS.md` §10](LIMITATIONS.md#10-已知-bug--待修)。
 
 ## 测试设置
 
@@ -263,7 +268,7 @@ pypdf 在加密 + 损坏 xref 上比 Rust/C 实现的库脆弱。
 
 | 库 | 速度 | 功能广度 | fitz 兼容 | 部署 | 特长 |
 |---|---|---|---|---|---|
-| **flashpdf** | **★★★★★** | ★★★ | ✅ 主流 | 需 Rust 工具链源码构建；render 需 PDFium binary | 最快文本 + 最快渲染 |
+| **flashpdf** | **★★★★★** | ★★★ | ✅ 主流 | 需 Rust 工具链源码构建；render 需 PDFium binary | 最快文本 + 最快渲染 + 165/165 零失败 |
 | pdf_oxide | ★★★★ | ★★★★★ | ❌ | pip install | 唯一同时支持编辑（合并/拆分/签名）的快速库 |
 | PyMuPDF | ★★★ | ★★★★★ | — (就是 fitz) | pip install 开箱即用 | 全功能：编辑、注释、签名、OCR、AES-256 |
 | pypdfium2 | ★★★ | ★★★ | ❌ | pip install 自带 PDFium | 渲染最稳定、纯 Python wheel |
